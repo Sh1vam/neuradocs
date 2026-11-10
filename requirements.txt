@@ -1,0 +1,32 @@
+# pip install -r requirements.txt   (unpinned on purpose: run `pip freeze > requirements.lock` once it works)
+fastapi>=0.110
+uvicorn[standard]
+python-multipart
+pydantic>=2
+httpx
+python-dotenv
+groq
+openai
+# NeuraChat: reading and generating files
+PyPDF2
+python-docx
+python-pptx
+reportlab
+nbformat
+matplotlib
+numpy
+Pillow
+tiktoken
+# DocuTeam: grounded document Q&A and code checks
+sentence-transformers
+chromadb
+scikit-learn
+requests
+trafilatura
+psutil
+pytest
+ruff
+bandit
+pip-audit
+huggingface_hub
+lxml

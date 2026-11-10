@@ -1,0 +1,18 @@
+# Install with:  pip install -r requirements.txt
+# Then record exact versions for reproducibility:  pip freeze > requirements.lock
+groq
+openai
+sentence-transformers
+chromadb
+requests
+trafilatura
+psutil
+httpx
+scikit-learn
+python-dotenv
+numpy
+pytest
+ruff
+bandit
+pip-audit
+# optional: anthropic (only if you use the 'claude' providers), playwright (rendered browsing)

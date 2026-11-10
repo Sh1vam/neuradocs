@@ -1,0 +1,9 @@
+Helix Robotics IT Equipment FAQ
+
+Replacement: Company laptops are replaced every four years.
+
+Peripherals: Requests for keyboards, webcams or docking stations go through the IT portal and are handled within three working days.
+
+Encryption: Disk encryption is switched on automatically when IT sets up a new laptop.
+
+Support: The IT helpdesk is open from 08:00 to 18:00 on working days.

@@ -1,0 +1,7 @@
+pytest
+ruff
+django
+flask
+fastapi
+httpx
+pytest-django

@@ -1,0 +1,9 @@
+Helix Robotics Contractor Guidelines
+
+Remote work: Contractors may work remotely one day per week unless their statement of work says otherwise. Remote days must be agreed with the project lead in advance.
+
+Equipment: Contractors bring their own laptops. Helix does not issue a monitor to contractors; shared desks with screens are available on site.
+
+Leave: Contractors do not accrue paid leave. Time off is agreed in the statement of work and is unpaid unless stated otherwise.
+
+Security: Contractor laptops must be enrolled in device management before they can join the network. Lost devices must be reported to the security team within 48 hours.

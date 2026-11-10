@@ -1,0 +1,42 @@
+# docker compose up -d --build      (python bootstrap.py does this, plus .env and checks)
+services:
+  app:
+    build: .
+    env_file: .env
+    environment:
+      PORT: "8000"
+      SANDBOX_URL: http://sandbox:9000
+    depends_on: [sandbox]
+    networks: [edge, internal]
+    ports: ["${APP_BIND:-127.0.0.1}:${APP_PORT:-8000}:8000"]     # use APP_BIND=0.0.0.0 to expose it without a proxy
+    volumes:
+      - data:/data
+      - chroma:/app/docuteam/chroma
+      - workspace:/app/docuteam/workspace
+      - outputs:/app/outputs
+    restart: unless-stopped
+  sandbox:                                    # generated code runs HERE, never in the app container
+    build: {context: ., dockerfile: runner/Dockerfile}
+    environment:
+      SANDBOX_TOKEN: ${SANDBOX_TOKEN:?set SANDBOX_TOKEN in .env}
+      SANDBOX_SLOTS: ${SANDBOX_SLOTS:-2}
+    networks: [internal]                      # internal: no route to the internet
+    read_only: true
+    tmpfs: ["/work:size=256m,uid=1000", "/tmp:size=64m"]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 1g
+    cpus: 1.5
+    pids_limit: 256
+    restart: unless-stopped
+  caddy:                                      # optional HTTPS: docker compose --profile tls up -d  (set DOMAIN in .env)
+    image: caddy:2
+    profiles: ["tls"]
+    command: caddy reverse-proxy --from ${DOMAIN:-localhost} --to app:8000
+    ports: ["80:80", "443:443"]
+    networks: [edge]
+    volumes: [caddy:/data]
+networks:
+  edge: {}
+  internal: {internal: true}
+volumes: {data: {}, chroma: {}, workspace: {}, outputs: {}, caddy: {}}

@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DocuTeam</title>
+<style>
+:root{--bg:#eef1f5;--panel:#fff;--ink:#14202e;--muted:#5b6877;--line:#d5dce5;--accent:#1f46c9;--on-accent:#fff;--ok:#1d6b45;--warn:#8f5200;--hi:#e1e9ff;--user:#dde5f2;--sans:system-ui,-apple-system,"Segoe UI",sans-serif;--serif:Georgia,Cambria,"Times New Roman",serif}
+@media (prefers-color-scheme:dark){:root{--bg:#0d131a;--panel:#141c25;--ink:#e5ebf2;--muted:#8d9aab;--line:#273341;--accent:#86a7ff;--on-accent:#0d131a;--ok:#63c28f;--warn:#e0a24a;--hi:#1c2b4d;--user:#1c2735}}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{background:var(--bg);color:var(--ink);font:15px/1.5 var(--sans);display:flex;flex-direction:column}
+button{font:inherit;color:inherit;cursor:pointer}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+header{display:flex;align-items:center;justify-content:space-between;padding:12px 20px;background:var(--panel);border-bottom:1px solid var(--line)}
+header h1{margin:0;font-size:17px;font-weight:650}
+.tools{display:flex;gap:10px;align-items:center}
+.tools a,.add{color:var(--muted);font-size:14px;cursor:pointer;border:1px solid var(--line);border-radius:8px;padding:4px 12px;text-decoration:none}
+header button{background:none;border:1px solid var(--line);border-radius:8px;padding:4px 12px;color:var(--muted)}
+#log{flex:1;overflow-y:auto;padding:24px 16px}
+.col{max-width:720px;margin:0 auto;display:flex;flex-direction:column;gap:24px}
+.u{align-self:flex-end;max-width:85%;background:var(--user);padding:9px 14px;border-radius:14px 14px 4px 14px;white-space:pre-wrap;overflow-wrap:anywhere}
+.a{display:flex;flex-direction:column;gap:10px}
+.ans{margin:0;max-width:68ch;font:17px/1.65 var(--serif);white-space:pre-wrap;overflow-wrap:anywhere}
+.cite{font:600 11px/1 var(--sans);color:var(--accent);background:var(--hi);border:0;border-radius:4px;padding:3px 5px;margin:0 2px;vertical-align:2px}
+.cite:disabled{color:var(--muted);background:none;cursor:default}
+.src{display:flex;flex-direction:column;gap:2px;padding-left:12px;border-left:2px solid var(--line);font-size:13px;color:var(--muted)}
+.src b{font-weight:600;color:var(--ink);margin-bottom:2px}
+.row{display:flex;gap:10px;padding:2px 6px;border-radius:4px}
+.row.hit{background:var(--hi);color:var(--ink)}
+.row .n{width:14px;text-align:right;font-weight:600;flex:none}
+.meta{display:flex;flex-wrap:wrap;gap:4px 16px;align-items:center;font-size:13px;color:var(--muted)}
+.ok{color:var(--ok)}.warn,.err{color:var(--warn)}
+.vote{display:flex;gap:6px}
+.vote button{background:none;border:1px solid var(--line);border-radius:6px;padding:1px 10px;font-size:13px;color:var(--muted)}
+.vote button:hover{border-color:var(--accent);color:var(--ink)}
+.wait{color:var(--muted);animation:pulse 1.4s ease-in-out infinite}
+@keyframes pulse{50%{opacity:.4}}
+@media (prefers-reduced-motion:reduce){.wait{animation:none}}
+.empty{margin-top:12vh}
+.empty h2{margin:0 0 6px;font:600 28px/1.2 var(--serif)}
+.empty p{margin:0 0 18px;color:var(--muted)}
+.ex{display:flex;flex-direction:column;gap:8px;align-items:flex-start}
+.ex button{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:8px 14px;text-align:left}
+.ex button:hover{border-color:var(--accent)}
+form{background:var(--panel);border-top:1px solid var(--line);padding:12px 16px}
+.bar{max-width:720px;margin:0 auto;display:flex;gap:10px;align-items:flex-end}
+textarea{flex:1;resize:none;max-height:140px;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:var(--bg);color:var(--ink);font:inherit}
+#send{background:var(--accent);color:var(--on-accent);border:0;border-radius:10px;padding:10px 18px;font-weight:600}
+#send:disabled{opacity:.5;cursor:default}
+</style>
+</head>
+<body>
+<header><h1>DocuTeam</h1><span class="tools"><a href="/">Back to chat</a><label class="add">Add document<input id="up" type="file" accept=".pdf,.docx,.pptx,.txt,.md" hidden></label><button id="new" type="button">New chat</button></span></header>
+<main id="log"><div class="col" id="col"></div></main>
+<form id="f"><div class="bar">
+  <textarea id="q" rows="1" placeholder="Ask a question about your documents" aria-label="Your question"></textarea>
+  <button id="send" type="submit">Ask</button>
+</div></form>
+<script>
+const EXAMPLES = ['How many remote days can new hires have per week?', 'How long do I have to report a lost laptop?', 'How many remote days per week are contractors allowed?'];
+const col = document.getElementById('col'), log = document.getElementById('log'), q = document.getElementById('q'), send = document.getElementById('send');
+let history = [], busy = false;
+
+function el(tag, cls, text) { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
+function scrollDown() { log.scrollTop = log.scrollHeight; }
+
+function showEmpty() {
+  const box = el('div', 'empty');
+  box.append(el('h2', null, 'Ask about your documents'), el('p', null, 'Every answer points to the passages it came from.'));
+  const ex = el('div', 'ex');
+  EXAMPLES.forEach(t => { const b = el('button', null, t); b.type = 'button'; b.onclick = () => ask(t); ex.append(b); });
+  box.append(ex); col.append(box);
+}
+
+function answerBlock(r) {
+  const numbered = r.route === 'docs' && r.sources.length > 0;
+  const wrap = el('div', 'a'), p = el('p', 'ans');
+  r.answer.split(/(\[\d+(?:\s*,\s*\d+)*\])/).forEach(part => {
+    const m = part.match(/^\[(\d+(?:\s*,\s*\d+)*)\]$/);
+    if (!m) { p.append(part); return; }
+    m[1].split(',').forEach(n => {
+      n = n.trim();
+      const b = el('button', 'cite', n); b.type = 'button'; b.disabled = !numbered; b.title = 'Show passage ' + n;
+      b.onclick = () => { const row = wrap.querySelector('[data-n="' + n + '"]'); if (!row) return; row.classList.add('hit'); setTimeout(() => row.classList.remove('hit'), 1600); };
+      p.append(b);
+    });
+  });
+  wrap.append(p);
+
+  if (r.sources.length) {
+    const s = el('div', 'src'); s.append(el('b', null, 'Passages retrieved'));
+    r.sources.forEach((src, i) => {
+      const row = el('div', 'row'); row.dataset.n = String(i + 1);
+      row.append(el('span', 'n', numbered ? String(i + 1) : '–'));
+      if (/^https?:/.test(src)) { const a = el('a', null, src); a.href = src; a.target = '_blank'; a.rel = 'noopener noreferrer'; row.append(a); }
+      else { const [file, chunk] = src.split(':'); row.append(el('span', null, file + (chunk !== undefined ? ', passage ' + (+chunk + 1) : ''))); }
+      s.append(row);
+    });
+    wrap.append(s);
+  }
+
+  const meta = el('div', 'meta');
+  if (r.route === 'docs' || r.route === 'web') meta.append(r.grounded ? el('span', 'ok', 'Citations match the retrieved passages') : el('span', 'warn', 'Not backed by a source'));
+  if (r.route === 'cache') meta.append(el('span', null, 'Answered from cache'));
+  meta.append(el('span', null, r.seconds + ' s'));
+  const vote = el('span', 'vote');
+  [['approved', 'Helpful'], ['rejected', 'Not helpful']].forEach(([verdict, label]) => {
+    const b = el('button', null, label); b.type = 'button';
+    b.onclick = async () => {
+      try {
+        const res = await fetch('/api/docs/feedback', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ request_id: r.request_id, verdict }) });
+        vote.replaceChildren(el('span', res.ok ? 'ok' : 'warn', res.ok ? 'Feedback saved' : 'Could not save feedback'));
+      } catch (e) { vote.replaceChildren(el('span', 'warn', 'Could not save feedback')); }
+    };
+    vote.append(b);
+  });
+  meta.append(vote); wrap.append(meta);
+  return wrap;
+}
+
+function errorBlock(msg) {
+  const w = el('div', 'a'); w.append(el('p', 'err', 'The question did not go through: ' + msg), el('div', 'meta', 'The terminal running server.py shows the full error.'));
+  return w;
+}
+
+async function ask(text) {
+  text = text.trim();
+  if (busy || !text) return;
+  busy = true; send.disabled = true; q.value = ''; q.style.height = 'auto';
+  col.querySelector('.empty')?.remove();
+  col.append(el('div', 'u', text));
+  const wait = el('div', 'wait', 'Searching your documents…'); col.append(wait); scrollDown();
+  try {
+    const res = await fetch('/api/docs/ask', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ question: text, history: history.slice(-6) }) });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || JSON.stringify(data.detail) || res.statusText);
+    wait.replaceWith(answerBlock(data));
+    history.push(['user', text], ['assistant', data.answer]);
+  } catch (e) { wait.replaceWith(errorBlock(e.message)); }
+  busy = false; send.disabled = false; q.focus(); scrollDown();
+}
+
+document.getElementById('f').onsubmit = e => { e.preventDefault(); ask(q.value); };
+q.onkeydown = e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); ask(q.value); } };
+q.oninput = () => { q.style.height = 'auto'; q.style.height = q.scrollHeight + 'px'; };
+document.getElementById('new').onclick = () => { if (busy) return; history = []; col.replaceChildren(); showEmpty(); q.focus(); };
+document.getElementById('up').onchange = async e => {
+  const f = e.target.files[0];
+  if (!f) return;
+  col.querySelector('.empty')?.remove();
+  const note = el('div', 'wait', 'Reading and indexing ' + f.name + '…'); col.append(note); scrollDown();
+  const fd = new FormData(); fd.append('file', f);
+  try {
+    const r = await fetch('/api/docs/upload', { method: 'POST', body: fd }), d = await r.json();
+    note.className = r.ok ? 'meta ok' : 'err';
+    note.textContent = r.ok ? d.file + ' added (' + d.chunks + ' passages). You can ask about it now.' : (d.error || d.detail || 'Upload failed');
+  } catch (err) { note.className = 'err'; note.textContent = 'Upload failed: ' + err.message; }
+  e.target.value = ''; scrollDown();
+};
+showEmpty(); q.focus();
+</script>
+</body>
+</html>
