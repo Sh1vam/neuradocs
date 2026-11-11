@@ -4,11 +4,11 @@ services:
     build: .
     env_file: .env
     environment:
-      PORT: "8000"
+      PORT: "8001"
       SANDBOX_URL: http://sandbox:9000
     depends_on: [sandbox]
     networks: [edge, internal]
-    ports: ["${APP_BIND:-127.0.0.1}:${APP_PORT:-8000}:8000"]     # use APP_BIND=0.0.0.0 to expose it without a proxy
+    ports: ["${APP_BIND:-127.0.0.1}:${APP_PORT:-8001}:8001"]     # use APP_BIND=0.0.0.0 to expose it without a proxy
     volumes:
       - data:/data
       - chroma:/app/docuteam/chroma
@@ -36,6 +36,9 @@ services:
     ports: ["80:80", "443:443"]
     networks: [edge]
     volumes: [caddy:/data]
+  egress:                               # optional: docker compose --profile egress up -d  (set SANDBOX_PROXY in .env)  , docker compose --profile internet up -d, docker compose logs -f egress, docker compose exec sandbox curl -I https://pypi.org, docker compose exec sandbox ./run_tests.sh
+    environment:
+      - EGRESS_ALLOW=files.pythonhosted.org,repo.mycompany.com,api.openai.com
 networks:
   edge: {}
   internal: {internal: true}
