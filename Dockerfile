@@ -3,8 +3,10 @@ ENV PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1
 WORKDIR /app
 # CPU-only torch first: the default PyPI wheel on Linux is the multi-GB CUDA build
 COPY constraints.txt requirements.txt ./
-RUN pip install torch --index-url https://download.pytorch.org/whl/cpu -c constraints.txt \
- && pip install -r requirements.txt -c constraints.txt
+RUN pip install --no-cache-dir setuptools==82.0.0 \
+ && pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu -c constraints.txt \
+ && pip install --no-cache-dir -r requirements.txt -c constraints.txt
+
 COPY . .
 # the models are downloaded while the image is built, so a running container needs no internet for them
 RUN python docuteam/download_models.py

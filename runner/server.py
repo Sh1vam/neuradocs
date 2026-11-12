@@ -15,10 +15,11 @@ TOKEN = os.environ.get('SANDBOX_TOKEN', '')
 WORK = Path(os.environ.get('WORKDIR', '/work'))
 ALLOWED = {'python', 'pytest'}
 MAX_OUT, MAX_BODY = 20_000, 4_000_000
+PROXY_ENV = {k: os.environ[k] for k in ('HTTP_PROXY', 'HTTPS_PROXY', 'NO_PROXY', 'http_proxy', 'https_proxy') if os.environ.get(k)}
 slots = threading.BoundedSemaphore(int(os.environ.get('SANDBOX_SLOTS', '2')))     # jobs at once (the memory limit is shared)
 
 
-def run_job(files, argv, timeout):
+def run_job(files, argv, timeout, install=False):
     WORK.mkdir(parents=True, exist_ok=True)
     root = Path(tempfile.mkdtemp(dir=WORK)).resolve()
     try:
@@ -31,7 +32,17 @@ def run_job(files, argv, timeout):
         if not argv or argv[0] not in ALLOWED:
             return 2, 'command not allowed: ' + (argv[0] if argv else '(empty)')
         cmd = [sys.executable if argv[0] == 'python' else argv[0]] + list(argv[1:])
-        env = {'PATH': os.environ.get('PATH', ''), 'HOME': str(root), 'PYTHONDONTWRITEBYTECODE': '1'}   # no secrets in here
+        env = {'PATH': os.environ.get('PATH', ''), 'HOME': str(root), 'PYTHONDONTWRITEBYTECODE': '1', **PROXY_ENV}   # no secrets in here
+        if install and (root / 'requirements.txt').exists():       # needs internet: only through the allowlist proxy
+            try:
+                pip = subprocess.run([sys.executable, '-m', 'pip', 'install', '-r', 'requirements.txt', '--target', '.deps', '-q', '--no-input',
+                                      '--disable-pip-version-check', '--no-cache-dir', '--retries', '1', '--timeout', '15'],
+                                     cwd=root, capture_output=True, text=True, timeout=min(timeout, 180), env=env)
+            except subprocess.TimeoutExpired:
+                return 124, 'pip install timed out'
+            if pip.returncode:
+                return 3, 'pip install failed:\n' + (pip.stdout + pip.stderr)[-3000:]
+            env['PYTHONPATH'] = str(root / '.deps')
         try:
             r = subprocess.run(cmd, cwd=root, capture_output=True, text=True, timeout=timeout, env=env)
             return r.returncode, (r.stdout + r.stderr)[-MAX_OUT:]
@@ -63,10 +74,11 @@ class Handler(BaseHTTPRequestHandler):
         try:
             job = json.loads(self.rfile.read(n))
             files, argv, timeout = job['files'], job['argv'], min(int(job.get('timeout', 60)), 300)
+            install = bool(job.get('install'))
         except Exception:
             return self.reply(400, {'error': 'bad request'})
         with slots:
-            rc, out = run_job(files, argv, timeout)
+            rc, out = run_job(files, argv, timeout, install)
         self.reply(200, {'rc': rc, 'output': out})
 
     def log_message(self, *args):

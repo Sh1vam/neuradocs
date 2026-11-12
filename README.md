@@ -5,6 +5,16 @@ NeuraChat is the app (chat UI, file generation, tool-calling agent). DocuTeam si
 
 Start with `CONCEPTS.md`: it follows one message through the whole system and explains each design choice.
 
+## First-time setup of `.env`
+`python scripts/setup_env.py` checks your `.env` and adds what is missing, without touching what you set: `APP_PASSWORD` and
+`SANDBOX_TOKEN` (random secrets it generates), `APP_PORT=8001`, `LLM_BIG`. Add `--internet` to also switch on the sandbox's
+internet access (then `docker compose --profile internet up -d`). It never invents your `GROQ_API_KEY`: paste that yourself.
+- `APP_PASSWORD` is the password of the web page (the browser asks for a username: anything, plus this password). Docker needs
+  it because the app listens on all addresses inside its container, where the code running in the sandbox can reach it too.
+- `SANDBOX_TOKEN` is a secret you invent, shared by the app and the sandbox service. Nobody issues it.
+- After editing `.env`, run `docker compose up -d` (a plain `restart` does not re-read it).
+- The app listens on port 8001 everywhere; `APP_PORT` is the port on your machine.
+
 ## Run
 1. `pip install -r requirements.txt`
 2. Copy `.env.example` to `.env` and paste a NEW Groq key (the old one was in source code: revoke it).
@@ -103,6 +113,52 @@ Start with `CONCEPTS.md`: it follows one message through the whole system and ex
 - **The team** (Build mode and the `build_project` tool): Researcher (GitHub search for similar projects) -> Planner (compares 3
   options, picks one, writes the spec) -> Coder -> Tester (sandbox) -> Coder fixes -> Tester. The reply carries a Team log and
   the options compared. `BUILD_TEAM=0` skips research and planning to save tokens. Agent mode also has a `search_projects` tool.
+
+## Bundled skills
+`make-presentation`, `make-report`, `make-spreadsheet`, `read-documents` (files); `django-project`, `fastapi-service`, `python-cli`,
+`bugfix-workflow` (code); `frontend-design` (web UI, from Anthropic, Apache-2.0, see `skills/NOTICE.md`); `research-topic`,
+`write-skills`, `neuradocs-help` (how this app works: the agent can answer questions about its own settings).
+Not included, on purpose: skills that drive tools this app does not have (Google Workspace, Claude Docs, memory import, browser or
+computer control, video and image art), and skills whose license does not allow copying. The document skills (docx, pptx, pdf, xlsx)
+are Apache-2.0, but they run docx-js, LibreOffice and helper scripts that are not in this app, so the matching skills here are
+written for what the generators really accept.
+
+## Reading and creating files
+- Reading (`extract_text_from_file`): PDF with page markers (a scanned PDF says so instead of returning nothing), Word with
+  headings and tables, PowerPoint with titles, tables, grouped shapes and speaker notes, Excel (first 200 rows per sheet), plain
+  text. Problems come back as a bracketed message, and uploads refuse them instead of indexing the message as content.
+- Creating: the `generate_file` tool and plain-chat generation make pptx, pdf, docx, notebook and chart (Agent mode also makes xlsx workbooks). The matching skill
+  (`make-presentation`, `make-report`) is added to the prompt, and the tool reads the finished file back and reports
+  "Check: 8 slides, 412 words", with a warning when the file looks empty. Agent mode follows `read-documents` for questions about files.
+- Not supported: scanned PDFs (no OCR), legacy .doc/.xls/.ppt, text inside images, charts inside decks.
+
+## Skills (reusable instructions, like muscle memory)
+A skill is a folder with a `SKILL.md`: a front-matter block (`name`, `description`) and the instructions or workflow.
+- Bundled skills are in `skills/` (django-project, fastapi-service, python-cli, bugfix-workflow). Yours live in
+  `~/.neuradocs/skills` (Docker: the data volume) and replace a bundled skill of the same name.
+- Add and review them on the **Skills** page (`/skills`, linked in the sidebar), or drop a folder with a `SKILL.md` into that directory.
+- Only each skill's name and description are always in the agent's prompt; the full text is loaded when the agent calls
+  `use_skill`. Many skills therefore cost almost nothing.
+- Build mode picks up to 2 skills that fit the request (keyword match, no model call) and gives them to the Coder. The Team log
+  shows it: "Skills: following django-project".
+- The agent can propose a skill after a workflow that worked (`save_skill`). It stays **pending** until you approve it: a skill is
+  text that steers the agent from then on, so a document or web page must never be able to install one silently.
+- `SKILLS=0` turns automatic use in Build off; `SKILL_CHARS=3000` caps what one skill adds to a prompt.
+
+## Letting the sandbox reach the internet
+Off by default: generated code is untrusted (model-written, maybe steered by a document), and internet access is how data
+leaves, how cloud credentials (the metadata address) and your LAN get probed, and how abuse starts. Safe way, in 3 steps:
+1. In `.env`: `SANDBOX_PROXY=http://egress:3128` (and `SANDBOX_INSTALL=1` if the tester should `pip install` the project's
+   `requirements.txt`). Add domains with `EGRESS_ALLOW=pypi.org,files.pythonhosted.org,...`.
+2. `docker compose --profile internet up -d`.
+3. Check: `docker compose logs egress` lists every allowed and denied connection.
+- The sandbox itself stays on the internal network with no route out. It can reach only the `egress` proxy, which tunnels
+  HTTPS to allowlisted domains on ports 80/443, and only to public addresses (never localhost, LAN, other containers or the
+  metadata address). Default allowlist: PyPI, GitHub, npm. Anything else gets a 403.
+- Still true: the sandbox can talk to the other containers on the internal network (the app asks for a password) and a
+  package from PyPI runs inside the sandbox. Do not put secrets into the sandbox.
+- Local Docker mode (no compose): `SANDBOX_NETWORK=bridge` gives the container full internet and LAN access. Use it only on a
+  machine you do not mind exposing, and prefer the compose setup. The container is recreated when the setting changes.
 
 ## Stress test and scaling
 - `python scripts/stress_test.py --url http://127.0.0.1:8001 --readers 10 --chatters 10 --runners 4 --seconds 15` (add `--password`

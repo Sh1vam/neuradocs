@@ -20,6 +20,7 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException
 
 import sandbox_client
+import skillset
 import store
 from llm_client import new_usage
 
@@ -28,6 +29,8 @@ BUILDS = ROOT / 'docuteam' / 'workspace' / 'code' / 'builds'     # inside the fo
 router = APIRouter()
 _groq, _out, _model, _cost = None, ROOT / 'outputs', 'openai/gpt-oss-120b', None
 MAX_FILES, MAX_BYTES, MAX_ROUNDS = 25, 200_000, 3
+INSTALL = os.getenv('SANDBOX_INSTALL', '0') == '1'      # pip-install the project's requirements.txt before testing (needs sandbox internet)
+SKILL_CHARS = int(os.getenv('SKILL_CHARS', '3000'))     # most one skill adds to the Coder's prompt
 TEAM = os.getenv('BUILD_TEAM', '1') != '0'          # Researcher + Planner before the Coder (BUILD_TEAM=0 saves tokens)
 
 SYSTEM = (
@@ -77,7 +80,7 @@ def _llm(model, flags):
 
 def sandbox_pytest(rel):
     if sandbox_client.configured():                      # online deployment: the sandbox is a separate container
-        return sandbox_client.run_folder(BUILDS / Path(rel).name, ['python', '-m', 'pytest', '-q', '-p', 'no:cacheprovider'], 120)
+        return sandbox_client.run_folder(BUILDS / Path(rel).name, ['python', '-m', 'pytest', '-q', '-p', 'no:cacheprovider'], 120, install=INSTALL)
     import docs_api
     docs_api._path()
     import sandbox
@@ -86,8 +89,18 @@ def sandbox_pytest(rel):
     img = sandbox._docker(['image', 'inspect', '-f', '{{.Id}}', sandbox.IMAGE])
     if cur.returncode == 0 and img.returncode == 0 and cur.stdout.strip() != img.stdout.strip():
         sandbox._docker(['rm', '-f', name])             # the image was rebuilt: start a container from the new one
+    net = sandbox._docker(['inspect', '-f', '{{.HostConfig.NetworkMode}}', name])
+    if net.returncode == 0 and net.stdout.strip() != os.environ.get('SANDBOX_NETWORK', 'none'):
+        sandbox._docker(['rm', '-f', name])             # SANDBOX_NETWORK changed: recreate with the new network mode
     sandbox.ensure_sandbox(name)
-    return sandbox.exec_in(name, ['python', '-m', 'pytest', '-q', '-p', 'no:cacheprovider', rel], timeout=120)
+    argv = ['python', '-m', 'pytest', '-q', '-p', 'no:cacheprovider', rel]
+    if INSTALL and (BUILDS / Path(rel).name / 'requirements.txt').exists():
+        rc, out = sandbox.exec_in(name, ['python', '-m', 'pip', 'install', '-r', f'{rel}/requirements.txt', '--target', f'{rel}/.deps', '-q',
+                                         '--no-input', '--disable-pip-version-check', '--no-cache-dir', '--retries', '1', '--timeout', '15'], timeout=180)
+        if rc:
+            return 3, 'pip install failed:\n' + out
+        argv = ['env', f'PYTHONPATH={rel}/.deps'] + argv
+    return sandbox.exec_in(name, argv, timeout=120)
 
 
 def _prune(keep=10):                                    # the workspace keeps the newest builds
@@ -162,7 +175,7 @@ def _write(root, text):
 
 
 def _skip(p):
-    return bool({'__pycache__', '.pytest_cache'} & set(p.parts))
+    return bool({'__pycache__', '.pytest_cache', '.deps'} & set(p.parts))
 
 
 def _snapshot(root):
@@ -204,6 +217,10 @@ def build(spec, model=None, run_tests=None, llm=None, team=None, search=None, em
     (root / 'conftest.py').write_text('# makes the project root importable from tests/\n')
     files, status, out, feedback, rnd = [], 'skipped', '', None, 0
     task = 'Specification:\n' + brief + ('\n\nOriginal request:\n' + spec if brief != spec else '')
+    used = skillset.match(spec + ' ' + brief)                    # saved workflows that fit this request (keyword match, no tokens)
+    if used:
+        step('Skills', 'following ' + ', '.join(s['name'] for s in used))
+    system = SYSTEM + ''.join(f'\n\nSkill "{s["name"]}" (follow it):\n{s["body"][:SKILL_CHARS]}' for s in used)
     try:
         for rnd in range(1, MAX_ROUNDS + 1):
             user = task if not feedback else (
@@ -211,7 +228,7 @@ def build(spec, model=None, run_tests=None, llm=None, team=None, search=None, em
                 '\n\nThe tests failed. Fix the code (do not delete or weaken tests). Output every changed file in full.\n\n'
                 'Test output:\n' + feedback)
             try:
-                done = _write(root, llm(SYSTEM, user))
+                done = _write(root, llm(system, user))
             except Exception as e:
                 if not files:
                     raise                                # nothing produced yet: report the error

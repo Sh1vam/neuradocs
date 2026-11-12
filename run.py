@@ -36,6 +36,7 @@ import uvicorn  # noqa: E402
 port = int(os.getenv('PORT', '8001'))
 host = os.getenv('HOST', '127.0.0.1')
 if host != '127.0.0.1' and not os.getenv('APP_PASSWORD'):
-    sys.exit('Refusing to listen on a public address without APP_PASSWORD in .env.')
+    sys.exit('Refusing to listen on a public address without APP_PASSWORD.\n'
+             '  APP_PASSWORD is the login password of the web page. Run:  python scripts/setup_env.py   (adds it to .env), then  docker compose up -d')
 print(f'\nNeuraDocs  chat: http://127.0.0.1:{port}   documents Q&A: /documents   API docs: /docs')
 uvicorn.run('main:app', host=host, port=port, workers=int(os.getenv('WEB_CONCURRENCY', '1')))   # >1 = more processes, each loads the models

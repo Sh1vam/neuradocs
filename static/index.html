@@ -701,6 +701,7 @@ input[type=range] {
 
   <!-- Chats and projects (rendered from the database by refreshSidebar) -->
   <div class="sb-search"><input id="chatSearch" type="search" placeholder="Search chats" oninput="onChatSearch()"></div>
+  <div class="sb-search" style="display:flex;gap:14px;font-size:.78rem"><a href="/skills" style="color:var(--text-2)">Skills</a><a href="/documents" style="color:var(--text-2)">Documents</a></div>
   <div class="hist-area" id="histArea"></div>
 
   <!-- Capabilities -->
@@ -1599,7 +1600,7 @@ function renderSettingsPanel() {
     <div class="rp-section">
       <div class="rp-sec-label">Backend Info</div>
       <div class="info-box">
-        <strong>FastAPI</strong> server on port 8000<br>
+        <strong>FastAPI</strong> server (this page)<br>
         Docs: <a href="/docs" target="_blank" style="color:var(--accent)">/docs</a> · 
         Health: <a href="/api/health" target="_blank" style="color:var(--accent)">/api/health</a><br><br>
         <code>main.py</code> concepts:<br>

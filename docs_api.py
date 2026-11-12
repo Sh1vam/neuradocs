@@ -128,7 +128,7 @@ def upload(file: UploadFile = File(...)):
     if len(data) > 20 * 1024 * 1024:
         raise HTTPException(status_code=413, detail='File too large (max 20 MB)')
     text = _extract(data, file.filename or 'upload')
-    if not text.strip() or re.match(r'\[(PDF|DOCX|PPTX) extraction error|\[Binary file', text):
+    if not text.strip() or re.match(r'\[(PDF|DOCX|PPTX|XLSX|XLS|DOC)\b[^\]]*(error|no text layer|not supported|needs)|\[Binary file', text):
         return JSONResponse({'error': 'Could not read any text from this file.'}, status_code=422)
     name = re.sub(r'[^A-Za-z0-9._-]+', '_', Path(file.filename or 'upload').stem)[:60] or 'upload'
     dest = DT / 'workspace' / 'docs' / (name + '.txt')

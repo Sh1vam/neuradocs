@@ -58,7 +58,15 @@ more, without tools, for the answer (otherwise the page would show an empty repl
 5. A rate limit in round 2 or 3 keeps the files from round 1. Rate limits in any round are waited out, not fatal.
 6. The result is zipped with `zipfile`. RAR is a closed format that Python cannot write, and zip opens everywhere.
 
-## 5. Safety checklist (what each change protects)
+## 5. Skills (muscle memory)
+A skill (`skills/<name>/SKILL.md`, code in `skillset.py`) is saved instructions plus a short description of when to use them.
+- **Progressive disclosure**: the prompt carries only names and descriptions; `use_skill` loads the full text on demand.
+- **Deterministic reuse**: Build picks matching skills by keyword overlap (no model call), so the Coder gets the same
+  conventions every time instead of re-inventing them.
+- **A skill is a prompt that persists.** If an agent could save skills freely, one poisoned web page could steer every later
+  task. So the agent may only *propose* (`save_skill` writes to `_pending`); you approve on the Skills page.
+
+## 6. Safety checklist (what each change protects)
 - Key only in `.env` (it was once in source code). Server on 127.0.0.1 only; CORS limited to this app.
 - Generated code only in Docker. Uploads capped at 20 MB. Generated file names sanitised.
 - Routes registered before the static mount: a mount at `/` swallows every path after it.
