@@ -23,3 +23,10 @@ def test_setup_does_not_invent_the_api_key_and_can_turn_on_internet(tmp_path):
     assert added['GROQ_API_KEY'] is None and 'GROQ_API_KEY' not in setup_env.parse(env.read_text(encoding='utf-8'))
     values = setup_env.parse(env.read_text(encoding='utf-8'))
     assert values['SANDBOX_PROXY'] == 'http://egress:3128' and values['SANDBOX_INSTALL'] == '1'
+
+
+def test_setup_flags_values_that_break_docker_compose(tmp_path):
+    env = tmp_path / '.env'
+    env.write_text('DOMAIN=chat.example.com   (for HTTPS: docker compose --profile tls up -d)\nAPP_PORT=80x\nLLM_BIG=openai/gpt-oss-120b\n', encoding='utf-8')
+    found = setup_env.problems(setup_env.parse(env.read_text(encoding='utf-8')))
+    assert any('DOMAIN' in f for f in found) and any('APP_PORT' in f for f in found) and not any('LLM_BIG' in f for f in found)

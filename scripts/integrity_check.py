@@ -122,17 +122,13 @@ def check(root=ROOT, zip_path=None, db=None):
             problems.append(f'{sh.name} has Windows line endings (the container cannot run it)')
     add('FAIL' if problems else 'PASS', f'deployment files: {problems}' if problems else 'Dockerfiles, compose file and entrypoint are consistent')
 
-    # 6b. one container port everywhere
-    df_text, ports = (root / 'Dockerfile').read_text(), {}
-    for label, rx, text in (('Dockerfile ENV', r'ENV[^\n]*\bPORT=(\d+)', df_text), ('Dockerfile EXPOSE', r'EXPOSE (\d+)', df_text),
-                            ('healthcheck default', r"os\.getenv\('PORT','(\d+)'\)", df_text), ('compose PORT', r'PORT: "(\d+)"', compose),
-                            ('compose mapping', r':(\d+)"\]', compose[compose.index('ports:'):]), ('caddy target', r'--to app:(\d+)', compose)):
-        found = re.search(rx, text)
-        if found:
-            ports[label] = found.group(1)
-    same = len(set(ports.values())) == 1
-    add('PASS' if same else 'FAIL', f'one container port everywhere ({next(iter(ports.values()))}, {len(ports)} places agree)' if same
-        else f'the container port differs between files: {ports}')
+    # 6b. the container port is ONE setting (APP_PORT) used everywhere, and the image default matches the compose default
+    df_text = (root / 'Dockerfile').read_text()
+    image = set(re.findall(r'ENV[^\n]*\bPORT=(\d+)', df_text) + re.findall(r'EXPOSE (\d+)', df_text) + re.findall(r"os\.getenv\('PORT','(\d+)'\)", df_text))
+    defaults, uses = set(re.findall(r'\$\{APP_PORT:-(\d+)\}', compose)), compose.count('${APP_PORT:-')
+    ok_port = len(image | defaults) == 1 and uses >= 4
+    add('PASS' if ok_port else 'FAIL', f'port: the image and compose default to {next(iter(image | defaults))}; APP_PORT drives all {uses} places' if ok_port
+        else f'port settings disagree: image {sorted(image)}, compose defaults {sorted(defaults)}, APP_PORT used {uses} times (need 4)')
 
     # 7. every requirement is pinned by the constraints file
     cons = {norm(re.split(r'[<>=!~\[; @]', l.strip())[0]) for l in (root / 'constraints.txt').read_text().splitlines() if l.strip() and not l.startswith('#')}

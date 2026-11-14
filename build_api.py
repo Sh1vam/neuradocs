@@ -5,6 +5,7 @@
 #  * The fix loop is bounded (MAX_ROUNDS). An unbounded "retry until green" loop burns tokens forever.
 #  * Generated code only ever runs inside DocuTeam's Docker sandbox (no network, CPU/memory limits).
 #    Without Docker you still get the zip, clearly marked as untested.
+import contextvars
 import json
 import os
 import re
@@ -22,7 +23,7 @@ from fastapi import APIRouter, HTTPException
 import sandbox_client
 import skillset
 import store
-from llm_client import new_usage
+from llm_client import current_effort, new_usage, set_effort
 
 ROOT = Path(__file__).resolve().parent
 BUILDS = ROOT / 'docuteam' / 'workspace' / 'code' / 'builds'     # inside the folder the sandbox mounts
@@ -30,6 +31,16 @@ router = APIRouter()
 _groq, _out, _model, _cost = None, ROOT / 'outputs', 'openai/gpt-oss-120b', None
 MAX_FILES, MAX_BYTES, MAX_ROUNDS = 25, 200_000, 3
 INSTALL = os.getenv('SANDBOX_INSTALL', '0') == '1'      # pip-install the project's requirements.txt before testing (needs sandbox internet)
+CURRENT_CHAT = contextvars.ContextVar('current_chat', default=None)    # which chat the agent is serving (set by /api/mcp/chat)
+CHANGE = re.compile(r"\b(fix|bug|buggy|error|errors|fail|fails|failing|broken|wrong|issue|problem|not working|doesn'?t work|solve|change|update|modify|improve|refactor|rename|remove|tweak|adjust|add)\b", re.I)
+NEW = re.compile(r"\b(create|build|make|generate|scaffold)\b[^.?!]{0,40}\b(new|another|different)\b", re.I)
+
+
+def looks_like_change(text):
+    """A request to change the project built earlier in this chat, not to start another one."""
+    return bool(CHANGE.search(text)) and not NEW.search(text)
+
+
 SKILL_CHARS = int(os.getenv('SKILL_CHARS', '3000'))     # most one skill adds to the Coder's prompt
 TEAM = os.getenv('BUILD_TEAM', '1') != '0'          # Researcher + Planner before the Coder (BUILD_TEAM=0 saves tokens)
 
@@ -70,7 +81,7 @@ def _llm(model, flags):
     def call(system, user):
         r = _with_retries(lambda: _groq.chat.completions.create(
             model=model or _model, temperature=0.2, max_tokens=6500,
-            extra_body={'reasoning_effort': 'medium'},          # code deserves more thinking than chat
+            extra_body={'reasoning_effort': current_effort() or 'medium'},          # code deserves more thinking than chat
             messages=[{'role': 'system', 'content': system}, {'role': 'user', 'content': user}]))
         if getattr(r.choices[0], 'finish_reason', None) == 'length':
             flags['truncated'] = True                   # the last file may be cut off
@@ -103,7 +114,7 @@ def sandbox_pytest(rel):
     return sandbox.exec_in(name, argv, timeout=120)
 
 
-def _prune(keep=10):                                    # the workspace keeps the newest builds
+def _prune(keep=25):                                    # the workspace keeps the newest builds
     dirs = sorted((p for p in BUILDS.glob('*') if p.is_dir()), key=lambda p: p.stat().st_mtime, reverse=True)
     for p in dirs[keep:]:
         shutil.rmtree(p, ignore_errors=True)
@@ -188,7 +199,7 @@ def _snapshot(root):
     return '\n\n'.join(parts)
 
 
-def build(spec, model=None, run_tests=None, llm=None, team=None, search=None, emit=None):
+def build(spec, model=None, run_tests=None, llm=None, team=None, search=None, emit=None, base=None):
     flags, log = {}, []
     run_tests = run_tests or sandbox_pytest
     llm = llm or _llm(model, flags)
@@ -199,7 +210,7 @@ def build(spec, model=None, run_tests=None, llm=None, team=None, search=None, em
             emit(agent, text)
 
     options, chosen, brief = [], 0, spec
-    if TEAM if team is None else team:
+    if (TEAM if team is None else team) and not base:
         try:
             found = research(spec, search or github_search)
             step('Researcher', f'found {len(found)} similar projects' + (': ' + ', '.join(p['name'] for p in found[:3]) if found else ''))
@@ -211,19 +222,30 @@ def build(spec, model=None, run_tests=None, llm=None, team=None, search=None, em
              else 'no usable plan; building from the request as written')
     bid = uuid.uuid4().hex[:8]
     slug = re.sub(r'[^a-z0-9]+', '-', ' '.join(spec.lower().split()[:4])).strip('-') or 'project'
+    if base:
+        slug = Path(base).name.rsplit('-', 1)[0]                   # an update keeps the project's name
     root = BUILDS / f'{slug}-{bid}'
-    root.mkdir(parents=True)
+    if base:                                                       # start from the files of the earlier build
+        shutil.copytree(base, root, ignore=shutil.ignore_patterns('__pycache__', '.pytest_cache', '.deps'))
+        step('Reviser', f'loaded the project from {Path(base).name}')
+    else:
+        root.mkdir(parents=True)
     # pytest puts a conftest.py's folder on sys.path: that is what lets tests/ import the project files
     (root / 'conftest.py').write_text('# makes the project root importable from tests/\n')
     files, status, out, feedback, rnd = [], 'skipped', '', None, 0
+    if base:
+        files = sorted(p.relative_to(root).as_posix() for p in root.rglob('*') if p.is_file() and not _skip(p) and p.name != 'conftest.py')
     task = 'Specification:\n' + brief + ('\n\nOriginal request:\n' + spec if brief != spec else '')
+    if base:
+        task = ('Change request:\n' + spec + '\n\nThe project already exists (its files are below). Output ONLY the files you change, each in full. '
+                'When it is a bug, reproduce it with a test first: the test fails before the change and passes after it.')
     used = skillset.match(spec + ' ' + brief)                    # saved workflows that fit this request (keyword match, no tokens)
     if used:
         step('Skills', 'following ' + ', '.join(s['name'] for s in used))
     system = SYSTEM + ''.join(f'\n\nSkill "{s["name"]}" (follow it):\n{s["body"][:SKILL_CHARS]}' for s in used)
     try:
         for rnd in range(1, MAX_ROUNDS + 1):
-            user = task if not feedback else (
+            user = (task + '\n\nCurrent files:\n' + _snapshot(root) if base else task) if not feedback else (
                 task + '\n\nCurrent files:\n' + _snapshot(root) +
                 '\n\nThe tests failed. Fix the code (do not delete or weaken tests). Output every changed file in full.\n\n'
                 'Test output:\n' + feedback)
@@ -258,7 +280,7 @@ def build(spec, model=None, run_tests=None, llm=None, team=None, search=None, em
     badge = {'passed': 'All tests passed in the sandbox',
              'failed': f'Tests still failing after {rnd} round(s)',
              'skipped': 'Tests were NOT run (sandbox problem, see the output below)'}[status]
-    lines = [f'**Built `{slug}`**: {len(files)} files. {badge}.', '']
+    lines = [f'**{"Updated" if base else "Built"} `{slug}`**: {len(files)} files. {badge}.', '']
     if log:
         lines += ['**Team log**'] + [f'{i}. **{a}**: {t}' for i, (a, t) in enumerate(log, 1)] + ['']
     if options:
@@ -271,7 +293,7 @@ def build(spec, model=None, run_tests=None, llm=None, team=None, search=None, em
     if out:
         lines += ['', '```', out[-1200:], '```']
     return {'response': '\n'.join(lines), 'zip': zip_name, 'status': status, 'rounds': rnd, 'files': files,
-            'log': log, 'options': options}
+            'log': log, 'options': options, 'folder': root.name, 'slug': slug}
 
 
 @router.post('/api/build')
@@ -287,8 +309,15 @@ def build_endpoint(request: dict):
             raise HTTPException(status_code=404, detail='project not found')
     store.add_message(conv_id, 'user', spec)
     usage = new_usage()
+    set_effort(request.get('reasoning_effort'))
+    fresh = spec.lower().startswith('new:')                        # "new: ..." starts another project even in a chat that has one
+    if fresh:
+        spec = spec[4:].strip()
+    prev = store.latest_build(conv_id)
+    base = BUILDS / prev['folder'] if prev and not fresh and (request.get('revise') or looks_like_change(spec)) and (BUILDS / prev['folder']).is_dir() else None
     try:
-        result = build(spec, request.get('model'))
+        result = build(spec, request.get('model'), base=base)
+        store.add_build(conv_id, result['folder'], result['slug'], result['zip'])
     except Exception as e:                              # rate limit, no usable files, ...
         store.add_message(conv_id, 'assistant', 'Build failed: ' + str(e))
         raise HTTPException(status_code=500, detail=str(e))
@@ -302,3 +331,20 @@ def build_endpoint(request: dict):
 def sandbox_state():
     import sandbox_check
     return sandbox_check.status()
+
+
+def remember(result):
+    """The agent built a project: note it for the chat it is serving, so a later change can load the same files."""
+    chat = CURRENT_CHAT.get()
+    if chat and store.chat_exists(chat):
+        store.add_build(chat, result['folder'], result['slug'], result['zip'])
+
+
+def revise_current(instruction):
+    chat = CURRENT_CHAT.get()
+    prev = store.latest_build(chat) if chat else None
+    if not prev or not (BUILDS / prev['folder']).is_dir():
+        return {'response': 'There is no project built earlier in this chat to change. Use build_project to create one.'}
+    result = build(instruction, base=BUILDS / prev['folder'])
+    remember(result)
+    return result

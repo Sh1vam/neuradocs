@@ -16,6 +16,16 @@ BASE = {                                  # setting: default. A function generat
     'APP_PORT': '8001',
 }
 INTERNET = {'SANDBOX_PROXY': 'http://egress:3128', 'SANDBOX_INSTALL': '1'}
+SAFE = re.compile(r'^[A-Za-z0-9._:/,@+-]+$')
+CHECKED = ('DOMAIN', 'APP_BIND', 'APP_PORT', 'PORT', 'HOST', 'SANDBOX_PROXY', 'EGRESS_ALLOW', 'LLM_BIG', 'LLM_SMALL', 'LLM_VISION')
+
+
+def problems(values):
+    """Values that docker compose or the app cannot use: spaces, quotes, brackets, < > |, or a port that is not a number."""
+    found = [f'{k}={v!r}: use a plain value, no spaces, quotes, brackets, < > or |' for k, v in values.items() if k in CHECKED and v and not SAFE.match(v)]
+    if values.get('APP_PORT') and not values['APP_PORT'].isdigit():
+        found.append(f"APP_PORT={values['APP_PORT']!r}: must be a number")
+    return found
 
 
 def parse(text):
@@ -78,6 +88,8 @@ def main():
             print(f'  added {key}={value}')
     if not added:
         print('  nothing was missing')
+    for line in problems(parse(env.read_text(encoding='utf-8'))):
+        print('  PROBLEM ' + line)
     print('Next: docker compose ' + ('--profile internet ' if o.internet else '') + 'up -d   (python bootstrap.py does everything)')
 
 

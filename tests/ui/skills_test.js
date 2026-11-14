@@ -1,9 +1,9 @@
-// UI test for the Skills page (real page in jsdom against a real server). Needs Node: cd tests/ui && npm install jsdom
-// Start the server first, with a throw-away skills folder:  SKILLS_DIR=/tmp/skl NEURACHAT_DB=/tmp/ui2.db python -m uvicorn main:app --port 8767
-// then: node skills_test.js
+// UI test for the Skills page. Needs Node: cd tests/ui && npm install jsdom
+// Start the server with a throw-away skills folder:  SKILLS_DIR=/tmp/skl NEURACHAT_DB=/tmp/ui2.db python -m uvicorn main:app --port 8767
+// then: node skills_test.js   (BASE=http://127.0.0.1:<port> overrides the address)
 const { JSDOM, VirtualConsole } = require('jsdom');
 const sleep = ms => new Promise(r => setTimeout(r, ms));
-const BASE = 'http://127.0.0.1:8767';
+const BASE = process.env.BASE || 'http://127.0.0.1:8767';
 (async () => {
   const errors = [], vc = new VirtualConsole();
   vc.on('jsdomError', e => errors.push(String(e.message).slice(0, 120)));

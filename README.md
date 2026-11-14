@@ -114,6 +114,37 @@ internet access (then `docker compose --profile internet up -d`). It never inven
   options, picks one, writes the spec) -> Coder -> Tester (sandbox) -> Coder fixes -> Tester. The reply carries a Team log and
   the options compared. `BUILD_TEAM=0` skips research and planning to save tokens. Agent mode also has a `search_projects` tool.
 
+## Models, thinking level and Hugging Face
+- The model list in the page comes from your keys: Groq's live list (speech and guard models are left out) and, with `HF_TOKEN`,
+  Hugging Face Inference Providers, shown under "Hugging Face". `HF_MODELS=a,b` limits that list. Costs shown for models without
+  a known price use the price of gpt-oss-120b, so treat them as estimates.
+- **Thinking: low / medium / high** (next to the model list, gpt-oss models only) sets the reasoning effort of your next message in
+  chat, Agent and Build. The browser remembers it; `LLM_EFFORT` is the default when nothing is chosen.
+
+## Changing a project you built
+Build remembers each chat's project. "fix the bug: nobody ever wins" or "add a reset button" in Build mode loads the earlier files,
+changes only what is needed, re-runs the tests in the sandbox and gives a new zip ("Updated `name`"). Start another project in the
+same chat with `new: ...`. In plain chat the page offers to switch to Build; in Agent mode the `revise_project` tool does it.
+Builds live in `docuteam/workspace/code/builds/` (the newest 25 are kept), the zips in `outputs/`.
+
+## Connectors (external APIs)
+The **Connectors** page (`/connectors`, linked in the sidebar) lets the agent call HTTP APIs: GitHub, weather, Hugging Face Hub or
+your own. You give a name, an https base URL and the NAME of the `.env` variable that holds the token (never the token itself).
+The call is made by the app, so the token never reaches the model or the sandbox. Safety rules: https only, no redirects, the host
+must resolve to a public address, paths cannot leave the connector, read-only unless you tick "allow changes", responses are
+labelled untrusted and capped at 20 KB. Not built: MCP servers (only HTTP APIs).
+
+## Docker: what is what
+- Containers: `neuradocs-app` (the app), `neuradocs-sandbox` (runs generated code, no internet unless `egress` is on),
+  `neuradocs-egress` (only with `--profile internet`).
+- The `agent-sandbox` image is DocuTeam's local-mode sandbox. With compose it is unused (the sandbox is `neuradocs-sandbox`): you can
+  `docker image rm agent-sandbox`.
+- Volumes: `neuradocs_data` (chats, skills, connectors), `neuradocs_chroma` (document index), `neuradocs_workspace` (project builds,
+  documents), `neuradocs_outputs` (zips and generated files).
+- Copy a zip out: `docker compose cp app:/app/outputs/<name>.zip .` List builds: `docker compose exec app ls docuteam/workspace/code/builds`.
+- The sandbox's `/work` folder is temporary space for one job at a time: it is empty between jobs.
+- The port is one setting: `APP_PORT` in `.env` (for example 8010), then `docker compose up -d`.
+
 ## Bundled skills
 `make-presentation`, `make-report`, `make-spreadsheet`, `read-documents` (files); `django-project`, `fastapi-service`, `python-cli`,
 `bugfix-workflow` (code); `frontend-design` (web UI, from Anthropic, Apache-2.0, see `skills/NOTICE.md`); `research-topic`,

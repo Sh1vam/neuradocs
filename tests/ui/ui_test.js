@@ -4,9 +4,10 @@
 //      python -c "import store; p=store.create_project('Thesis','Be formal'); a=store.create_chat(p); store.add_message(a,'user','Explain RAG'); store.add_message(a,'assistant','RAG = retrieve then generate'); b=store.create_chat(); store.add_message(b,'user','hello'); store.set_pinned(b,True)"
 //   3) start the server on port 8765 with the same NEURACHAT_DB:  python -m uvicorn main:app --port 8765
 //   4) node ui_test.js
+// Set BASE=http://127.0.0.1:<port> to test a server on another port (default 8765).
 const { JSDOM, VirtualConsole } = require('jsdom');
 const sleep = ms => new Promise(r => setTimeout(r, ms));
-const BASE = 'http://127.0.0.1:8765';
+const BASE = process.env.BASE || 'http://127.0.0.1:8765';
 const stub = new Proxy(function () {}, { get: (t, k) => (k === 'then' ? undefined : stub), apply: (t, th, a) => a[0] });
 (async () => {
   const vc = new VirtualConsole(), errors = [];
@@ -56,6 +57,18 @@ const stub = new Proxy(function () {}, { get: (t, k) => (k === 'then' ? undefine
   w.send();
   await sleep(900);
   console.log('request goes to the agent with build=true:', !!w.__body && w.__body.build === true && w.__body.stream === true);
+  const eff = $('#effortSel');
+  console.log('thinking selector present with 3 levels:', !!eff && eff.options.length === 3 && eff.value === 'low');
+  eff.value = 'high'; eff.dispatchEvent(new w.Event('change'));
+  console.log('thinking choice kept in state and in the browser:', w.eval('state.effort') === 'high' && w.localStorage.getItem('effort') === 'high');
+  console.log('model list grouped by provider:', d.querySelectorAll('#modelSel optgroup').length >= 1);
+  w.eval("state.modes.build = false; state.modes.agent = false; state.hasBuild = true; document.querySelectorAll('.mode-toggle.on').forEach(b => b.classList.remove('on'))");
+  $('#inp').value = 'fix the bug: nobody ever wins';
+  w.send();
+  await sleep(700);
+  const offer = $('.modal-bg');
+  console.log('change offer appears when the chat has a project:', !!offer && offer.textContent.includes('change to the project built earlier'));
+  if (offer) offer.querySelector('.modal-btn:not(.primary)').click();
   console.log('page script errors:', errors.length ? errors : 'none');
   process.exit(0);
 })();

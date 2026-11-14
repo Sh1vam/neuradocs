@@ -26,6 +26,11 @@ create table if not exists messages (
   id integer primary key autoincrement,
   chat_id text not null references chats(id) on delete cascade,
   role text not null, content text not null, created real not null);
+create table if not exists builds (
+  id integer primary key autoincrement,
+  chat_id text not null references chats(id) on delete cascade,
+  folder text not null, slug text not null, zip text not null, created real not null);
+create index if not exists idx_builds_chat on builds(chat_id, id);
 create index if not exists idx_chats_project on chats(project_id, pinned, updated);
 create index if not exists idx_messages_chat on messages(chat_id, id);
 '''
@@ -137,6 +142,18 @@ def rename_chat(cid, title):
 def delete_chat(cid):
     with db() as con:
         con.execute('delete from chats where id=?', (cid,))
+
+
+# ---- builds: the project folder made in a chat, so a later "fix it" can load the same code ----
+def add_build(chat_id, folder, slug, zip_name):
+    with db() as con:
+        con.execute('insert into builds (chat_id, folder, slug, zip, created) values (?,?,?,?,?)', (chat_id, folder, slug, zip_name, time.time()))
+
+
+def latest_build(chat_id):
+    with db() as con:
+        row = con.execute('select folder, slug, zip, created from builds where chat_id=? order by id desc limit 1', (chat_id,)).fetchone()
+    return dict(row) if row else None
 
 
 # ---- messages ----
