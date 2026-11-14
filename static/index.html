@@ -661,6 +661,11 @@ input[type=range] {
     <select class="model-select" id="modelSel" onchange="onModelChange()">
       <option value="openai/gpt-oss-120b">gpt-oss-120b</option>
     </select>
+    <select class="model-select" id="effortSel" onchange="onEffortChange()" title="How long the model thinks before it answers (gpt-oss models). More thinking is slower and uses more tokens.">
+      <option value="low">Thinking: low</option>
+      <option value="medium">Thinking: medium</option>
+      <option value="high">Thinking: high</option>
+    </select>
   </div>
 
   <!-- Token Counter -->
@@ -701,6 +706,7 @@ input[type=range] {
 
   <!-- Chats and projects (rendered from the database by refreshSidebar) -->
   <div class="sb-search"><input id="chatSearch" type="search" placeholder="Search chats" oninput="onChatSearch()"></div>
+  <div class="sb-search" style="display:flex;gap:14px;font-size:.78rem"><a href="/skills" style="color:var(--text-2)">Skills</a><a href="/documents" style="color:var(--text-2)">Documents</a><a href="/connectors" style="color:var(--text-2)">Connectors</a></div>
   <div class="hist-area" id="histArea"></div>
 
   <!-- Capabilities -->
@@ -850,6 +856,8 @@ function setWelcome(show) {
 const state = {
   convId: null,
   projectId: null,
+  effort: 'low',
+  hasBuild: false,
   model: 'openai/gpt-oss-120b',
   modes: { rag: false, stream: true, code: false, agent: false, build: false },
   attachments: [],  // { file, type, name, preview?, content? }
@@ -884,10 +892,21 @@ document.addEventListener('DOMContentLoaded', async () => {
   try {   // the model list comes from the server (LLM_BIG in .env); the vision model is not a chat model
     const ms = (await jget('/api/models')).models, sel = document.getElementById('modelSel');
     sel.innerHTML = '';
-    Object.entries(ms).filter(([, m]) => !m.supports_vision).forEach(([id, m]) => sel.add(new Option(m.name, id)));
+    const groups = {};                                    // chat models only (no speech or guard models), grouped by provider
+    Object.entries(ms).filter(([, m]) => !m.supports_vision && (m.kind || 'chat') === 'chat').forEach(([id, m]) => {
+      (groups[m.provider || 'groq'] = groups[m.provider || 'groq'] || []).push([id, m]);
+      if (typeof modelCtx !== 'undefined') modelCtx[id] = m.context_window || 128000;
+    });
+    Object.entries(groups).forEach(([prov, items]) => {
+      const og = document.createElement('optgroup'); og.label = prov === 'huggingface' ? 'Hugging Face' : 'Groq';
+      items.forEach(([id, m]) => og.append(new Option(m.name, id)));
+      sel.append(og);
+    });
     state.model = sel.value;
     document.getElementById('modelBadge').textContent = sel.options[sel.selectedIndex].text;
   } catch {}
+  try { const saved = localStorage.getItem('effort'); if (['low', 'medium', 'high'].includes(saved)) { state.effort = saved; document.getElementById('effortSel').value = saved; } } catch {}
+  updateEffortVisibility();
   // Load capabilities
   await loadCapabilities();
   // Start token polling
@@ -969,6 +988,10 @@ async function send() {
     // plain chat cannot run code or write files: offer the sandboxed builder instead
     if (await openForm('This looks like a project request', [], 'Build it in the sandbox', 'Just chat')) toggleMode('build');
   }
+  if (!state.modes.build && !state.modes.agent && state.hasBuild && /\b(fix|bug|buggy|error|errors|fail|fails|failing|broken|wrong|issue|problem|not working|doesn'?t work|solve|change|update|modify|improve|refactor|rename|remove|tweak|adjust|add)\b/i.test(messageText)) {
+    // plain chat has no access to the project's files: Build mode loads them, applies the change and re-runs the tests
+    if (await openForm('This looks like a change to the project built earlier', [], 'Apply it in the sandbox', 'Just chat')) toggleMode('build');
+  }
   const genType = detectGenerationType(messageText);
   if (state.modes.agent) {            // Agent on: with Build also on, the agent is told to build (see BUILD_RULE)
     await sendAgent(messageText, model);
@@ -1002,7 +1025,7 @@ async function sendAgent(text, model) {
   try {
     const resp = await fetch(`${API}/api/mcp/chat`, {
       method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ message: text, conversation_id: state.convId, project_id: state.projectId, model, stream: true, build: !!state.modes.build })
+      body: JSON.stringify({ message: text, conversation_id: state.convId, project_id: state.projectId, reasoning_effort: state.effort, model, stream: true, build: !!state.modes.build })
     });
     if (!resp.ok) throw new Error((await resp.json()).detail || resp.statusText);
     const reader = resp.body.getReader(), dec = new TextDecoder();
@@ -1020,6 +1043,7 @@ async function sendAgent(text, model) {
         if (d.conv_id) state.convId = d.conv_id;
         if (d.tool) status(d.status === 'tool_start' ? 'Using ' + d.tool + '…' : d.tool + ' finished, thinking…');
         if (d.done) {
+          if ((d.tool_calls || []).some(t => t.tool === 'build_project' || t.tool === 'revise_project')) state.hasBuild = true;
           const chips = (d.tool_calls || []).map(t => `<span class="msg-tok">🔧 ${escHtml(t.tool)}</span>`).join(' ') + ' ' + usageChips(d.usage);
           bubble.innerHTML = renderMarkdown(d.response) + (chips ? `<div class="msg-meta" style="margin-top:8px">${chips}</div>` : '');
           hljs.highlightAll(); addCopyButtons(bubble); refreshSidebar();
@@ -1038,11 +1062,12 @@ async function sendOnce(url, text, model, waitText) {
   try {
     const resp = await fetch(`${API}${url}`, {
       method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ message: text, conversation_id: state.convId, project_id: state.projectId, model })
+      body: JSON.stringify({ message: text, conversation_id: state.convId, project_id: state.projectId, reasoning_effort: state.effort, model })
     });
     const d = await resp.json();
     if (!resp.ok) throw new Error(d.detail || resp.statusText);
     state.convId = d.conv_id;
+    if (d.zip) state.hasBuild = true;
     const tools = (d.tool_calls || []).map(t => `<span class="msg-tok">🔧 ${escHtml(t.tool)}</span>`).join(' ') + ' ' + usageChips(d.usage);
     bubble.innerHTML = renderMarkdown(d.response) + (tools ? `<div class="msg-meta" style="margin-top:8px">${tools}</div>` : '');
     hljs.highlightAll();
@@ -1155,6 +1180,7 @@ async function sendChat(text, model) {
     message: text,
     conversation_id: state.convId,
     project_id: state.projectId,
+    reasoning_effort: state.effort,
     model,
     temperature: state.settings.temperature,
     max_tokens: state.settings.maxTokens,
@@ -1599,7 +1625,7 @@ function renderSettingsPanel() {
     <div class="rp-section">
       <div class="rp-sec-label">Backend Info</div>
       <div class="info-box">
-        <strong>FastAPI</strong> server on port 8000<br>
+        <strong>FastAPI</strong> server (this page)<br>
         Docs: <a href="/docs" target="_blank" style="color:var(--accent)">/docs</a> · 
         Health: <a href="/api/health" target="_blank" style="color:var(--accent)">/api/health</a><br><br>
         <code>main.py</code> concepts:<br>
@@ -1668,9 +1694,20 @@ async function resetTokens() {
 // ═══════════════════════════════════════════════════════════════════════════
 // UTILITY
 // ═══════════════════════════════════════════════════════════════════════════
+function updateEffortVisibility() {       // the thinking level only exists for gpt-oss models
+  const e = document.getElementById('effortSel');
+  if (e) e.style.display = (state.model || '').startsWith('openai/gpt-oss') ? '' : 'none';
+}
+function onEffortChange() {
+  state.effort = document.getElementById('effortSel').value;
+  try { localStorage.setItem('effort', state.effort); } catch {}
+}
+{ const baseOnModelChange = onModelChange; onModelChange = function () { baseOnModelChange(); updateEffortVisibility(); }; }
+
 function newChat(projectId = null) {
   state.convId = null;
   state.projectId = projectId;
+  state.hasBuild = false;
   state.titleSet = false;
   document.getElementById('msgs').innerHTML = '';
   setWelcome(true);
@@ -1770,6 +1807,7 @@ async function openChat(c) {
   if (state.generating) return;
   const rows = await jget('/api/chats/' + c.id + '/messages');
   state.convId = c.id; state.projectId = c.project_id; state.titleSet = true;
+  try { state.hasBuild = !!(await jget('/api/chats/' + c.id + '/build')).slug; } catch { state.hasBuild = false; }
   const box = document.getElementById('msgs');
   box.innerHTML = '';
   setWelcome(false);

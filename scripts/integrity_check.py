@@ -64,7 +64,7 @@ def check(root=ROOT, zip_path=None, db=None):
 
     # 4. every third-party import is covered by requirements.txt
     req = {norm(re.split(r'[<>=!~\[; ]', l.strip())[0]) for l in (root / 'requirements.txt').read_text().splitlines() if l.strip() and not l.startswith('#')}
-    local = {p.stem for p in files if p.suffix == '.py' and p.parent in (root, root / 'docuteam')} | {d.name for d in (root / 'docuteam').iterdir() if d.is_dir()}
+    local = {p.stem for p in files if p.suffix == '.py' and p.parent in (root, root / 'docuteam', root / 'scripts')} | {d.name for d in (root / 'docuteam').iterdir() if d.is_dir()}
     missing = set()
     for p in (q for q in files if q.suffix == '.py' and 'tests' not in q.parts):
         for node in ast.walk(ast.parse(p.read_text(encoding='utf-8', errors='replace'))):
@@ -93,9 +93,20 @@ def check(root=ROOT, zip_path=None, db=None):
     add('FAIL' if unknown else 'PASS', f'pages call routes that do not exist: {unknown}' if unknown
         else f'every /api call in the pages matches one of the {len(routes)} routes')
 
+    # 5b. the bundled skills are valid (front matter, name = folder, a description, instructions)
+    import skillset
+    bad_skills = [d.name for d in sorted((root / 'skills').iterdir()) if d.is_dir() and not skillset._read(d / 'SKILL.md', 'bundled')]
+    add('FAIL' if bad_skills else 'PASS', f'invalid bundled skills: {bad_skills}' if bad_skills else f'{len(skillset._scan(root / "skills", "bundled"))} bundled skills are valid')
+
+    # 5c. third-party skills carry their license and are credited in skills/NOTICE.md
+    notice = (root / 'skills' / 'NOTICE.md').read_text(encoding='utf-8') if (root / 'skills' / 'NOTICE.md').exists() else ''
+    uncredited = [d.name for d in (root / 'skills').iterdir() if d.is_dir() and (d / 'LICENSE.txt').exists() and d.name not in notice]
+    add('FAIL' if uncredited else 'PASS', f'skills with a LICENSE.txt but no credit in skills/NOTICE.md: {uncredited}' if uncredited
+        else 'every third-party skill has its license and a credit in skills/NOTICE.md')
+
     # 6. Docker and compose files point at things that exist
     problems = []
-    for df in [root / 'Dockerfile', root / 'runner' / 'Dockerfile']:
+    for df in [root / 'Dockerfile', root / 'runner' / 'Dockerfile', root / 'egress' / 'Dockerfile']:
         for line in df.read_text().splitlines():
             if line.startswith('COPY') and '--from' not in line:
                 for src in line.split()[1:-1]:
@@ -110,6 +121,14 @@ def check(root=ROOT, zip_path=None, db=None):
         if b'\r' in sh.read_bytes():
             problems.append(f'{sh.name} has Windows line endings (the container cannot run it)')
     add('FAIL' if problems else 'PASS', f'deployment files: {problems}' if problems else 'Dockerfiles, compose file and entrypoint are consistent')
+
+    # 6b. the container port is ONE setting (APP_PORT) used everywhere, and the image default matches the compose default
+    df_text = (root / 'Dockerfile').read_text()
+    image = set(re.findall(r'ENV[^\n]*\bPORT=(\d+)', df_text) + re.findall(r'EXPOSE (\d+)', df_text) + re.findall(r"os\.getenv\('PORT','(\d+)'\)", df_text))
+    defaults, uses = set(re.findall(r'\$\{APP_PORT:-(\d+)\}', compose)), compose.count('${APP_PORT:-')
+    ok_port = len(image | defaults) == 1 and uses >= 4
+    add('PASS' if ok_port else 'FAIL', f'port: the image and compose default to {next(iter(image | defaults))}; APP_PORT drives all {uses} places' if ok_port
+        else f'port settings disagree: image {sorted(image)}, compose defaults {sorted(defaults)}, APP_PORT used {uses} times (need 4)')
 
     # 7. every requirement is pinned by the constraints file
     cons = {norm(re.split(r'[<>=!~\[; @]', l.strip())[0]) for l in (root / 'constraints.txt').read_text().splitlines() if l.strip() and not l.startswith('#')}
