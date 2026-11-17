@@ -706,7 +706,7 @@ input[type=range] {
 
   <!-- Chats and projects (rendered from the database by refreshSidebar) -->
   <div class="sb-search"><input id="chatSearch" type="search" placeholder="Search chats" oninput="onChatSearch()"></div>
-  <div class="sb-search" style="display:flex;gap:14px;font-size:.78rem"><a href="/skills" style="color:var(--text-2)">Skills</a><a href="/documents" style="color:var(--text-2)">Documents</a><a href="/connectors" style="color:var(--text-2)">Connectors</a></div>
+  <div class="sb-search" style="display:flex;gap:14px;font-size:.78rem"><a href="/skills" style="color:var(--text-2)">Skills</a><a href="/documents" style="color:var(--text-2)">Documents</a><a href="/connectors" style="color:var(--text-2)">Connectors</a><a href="/models" id="modelsLink" style="color:var(--text-2)">Models</a></div>
   <div class="hist-area" id="histArea"></div>
 
   <!-- Capabilities -->
@@ -889,6 +889,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
 
   refreshSidebar();
+  checkLocalModels();
   try {   // the model list comes from the server (LLM_BIG in .env); the vision model is not a chat model
     const ms = (await jget('/api/models')).models, sel = document.getElementById('modelSel');
     sel.innerHTML = '';
@@ -984,7 +985,7 @@ async function send() {
   }
 
   // Check if message wants file generation
-  if (!state.modes.build && !state.modes.agent && /\b(create|build|make|generate|scaffold|set ?up|develop)\b[^.?!]{0,60}\b(project|app|application|api|website|web ?site|backend|cli|bot|django|flask|fastapi|codebase)\b/i.test(messageText)) {
+  if (!state.modes.build && !state.modes.agent && /\b(create|build|make|generate|scaffold|set ?up|develop)\b[^.?!]{0,60}\b(project|app|application|api|website|web ?site|backend|cli|bot|django|flask|fastapi|codebase|game)\b/i.test(messageText)) {
     // plain chat cannot run code or write files: offer the sandboxed builder instead
     if (await openForm('This looks like a project request', [], 'Build it in the sandbox', 'Just chat')) toggleMode('build');
   }
@@ -1045,7 +1046,7 @@ async function sendAgent(text, model) {
         if (d.done) {
           if ((d.tool_calls || []).some(t => t.tool === 'build_project' || t.tool === 'revise_project')) state.hasBuild = true;
           const chips = (d.tool_calls || []).map(t => `<span class="msg-tok">🔧 ${escHtml(t.tool)}</span>`).join(' ') + ' ' + usageChips(d.usage);
-          bubble.innerHTML = renderMarkdown(d.response) + (chips ? `<div class="msg-meta" style="margin-top:8px">${chips}</div>` : '');
+          bubble.innerHTML = renderMarkdown(d.response && d.response.trim() ? d.response : 'The model returned no text. Lower Thinking to low or medium and try again.') + (chips ? `<div class="msg-meta" style="margin-top:8px">${chips}</div>` : '');
           hljs.highlightAll(); addCopyButtons(bubble); refreshSidebar();
         }
       }
@@ -1069,7 +1070,7 @@ async function sendOnce(url, text, model, waitText) {
     state.convId = d.conv_id;
     if (d.zip) state.hasBuild = true;
     const tools = (d.tool_calls || []).map(t => `<span class="msg-tok">🔧 ${escHtml(t.tool)}</span>`).join(' ') + ' ' + usageChips(d.usage);
-    bubble.innerHTML = renderMarkdown(d.response) + (tools ? `<div class="msg-meta" style="margin-top:8px">${tools}</div>` : '');
+    bubble.innerHTML = renderMarkdown(d.response && d.response.trim() ? d.response : 'The model returned no text. Lower Thinking to low or medium and try again.') + (tools ? `<div class="msg-meta" style="margin-top:8px">${tools}</div>` : '');
     hljs.highlightAll();
     addCopyButtons(bubble);
     refreshSidebar();
@@ -1694,6 +1695,16 @@ async function resetTokens() {
 // ═══════════════════════════════════════════════════════════════════════════
 // UTILITY
 // ═══════════════════════════════════════════════════════════════════════════
+async function checkLocalModels() {          // "Models" turns blue while a local model is missing or downloading
+  try {
+    const d = await jget('/api/local-models'), a = document.getElementById('modelsLink');
+    const ready = d.models.every(m => m.status === 'ready'), busy = d.models.some(m => m.status === 'downloading');
+    a.textContent = ready ? 'Models' : busy ? 'Models (downloading…)' : 'Models (not downloaded)';
+    a.style.color = ready ? 'var(--text-2)' : 'var(--accent)';
+    if (busy) setTimeout(checkLocalModels, 3000);
+  } catch {}
+}
+
 function updateEffortVisibility() {       // the thinking level only exists for gpt-oss models
   const e = document.getElementById('effortSel');
   if (e) e.style.display = (state.model || '').startsWith('openai/gpt-oss') ? '' : 'none';

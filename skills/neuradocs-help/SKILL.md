@@ -20,7 +20,7 @@ Settings (.env)
 - GROQ_API_KEY is required. LLM_BIG is the model (openai/gpt-oss-120b). LLM_SMALL defaults to LLM_BIG. LLM_VISION is for image analysis only. LLM_EFFORT sets the reasoning effort of chat (low, medium, high).
 - APP_PASSWORD is the login password of the web page (the browser asks for a username: anything, and this password). It is required whenever HOST is not 127.0.0.1, which is always the case in Docker. SANDBOX_TOKEN is a shared secret between the app and the sandbox service: you invent it, nobody issues it. python scripts/setup_env.py adds missing settings and generates both. DOMAIN turns on HTTPS (docker compose --profile tls up -d).
 - The app listens on port 8001. APP_PORT is the port on your machine; APP_BIND says which address (127.0.0.1 by default). After editing .env run docker compose up -d.
-- BUILD_TEAM=0 skips research and planning. SKILLS=0 stops automatic skills in Build. SKILL_CHARS caps what one skill adds to a prompt. SKILLS_DIR moves your skills.
+- BUILD_TEAM=0 skips research and planning. SKILLS=0 stops automatic skills in Build. SKILL_CHARS caps what one skill adds to a prompt. SKILLS_DIR moves your skills (in Docker they live in the my_skills folder).
 - WEB_CONCURRENCY sets the number of app processes, SANDBOX_SLOTS the parallel sandbox jobs, NEURACHAT_DB the database path, GITHUB_TOKEN raises the GitHub search limit, FAKE_LLM=1 runs load tests without spending tokens.
 
 Sandbox and internet
@@ -28,6 +28,15 @@ Sandbox and internet
 - To allow it: in .env set SANDBOX_PROXY=http://egress:3128 (and SANDBOX_INSTALL=1 so the tester runs pip install on requirements.txt), then run docker compose --profile internet up -d. Only the domains in EGRESS_ALLOW are reachable (PyPI, GitHub and npm by default). docker compose logs egress shows every allowed and denied connection.
 - Local Docker mode: SANDBOX_NETWORK=bridge gives full internet and LAN access. Not recommended.
 - /api/sandbox/status says whether the sandbox works and why not.
+
+Local models and the Models page
+- The embedding model and the reranker (document search) run on this machine. They are downloaded before the app starts; /models shows progress with Download buttons. AUTO_DOWNLOAD_MODELS=0 turns the automatic download off. Cloud models need no download.
+
+Empty answers
+- If an answer is empty, the model spent its output budget thinking: lower Thinking to low or medium (LLM_EFFORT in .env is the default). Build mode still produces the zip.
+
+Checking .env
+- python scripts/setup_env.py --fix cleans explanations after values and adds missing settings. Comments go on their own line. GITHUB_TOKEN is optional and raises GitHub search limits for the Researcher and the GitHub connector.
 
 Models and thinking
 - The model list comes from your keys: Groq's live list and, with HF_TOKEN, Hugging Face models (HF_MODELS=a,b limits them). Thinking: low, medium or high (gpt-oss models only) is chosen next to the model list and applies to chat, Agent and Build.

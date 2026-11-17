@@ -1,6 +1,7 @@
 # docs_api.py -- the bridge between NeuraChat (the app) and DocuTeam (grounded document Q&A + sandbox).
 # CONCEPT: lazy loading. DocuTeam loads two ML models and a vector DB the moment it is imported
 # (10-30 s on CPU). Importing it on first use keeps the chat app's own startup instant.
+import os
 import re
 import shutil
 import sys
@@ -16,6 +17,7 @@ from fastapi import APIRouter, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field
 
+import local_models
 import sandbox_client
 
 ROOT = Path(__file__).resolve().parent
@@ -37,9 +39,20 @@ def _path():
         sys.path.insert(0, str(DT))
 
 
+def _need_models():
+    """The document models must be on this machine before DocuTeam loads. Start the download and say so, instead of a confusing crash."""
+    if 'knowledge' in sys.modules or all(m['status'] == 'ready' for m in local_models.status()):
+        return
+    if os.getenv('AUTO_DOWNLOAD_MODELS', '1') != '0':
+        local_models.start_missing()
+        raise RuntimeError('The document models are not on this machine yet and are downloading now. Open /models to watch, then ask again.')
+    raise RuntimeError('The document models are missing and AUTO_DOWNLOAD_MODELS=0. Open /models and press "Download all missing".')
+
+
 def _load():
     global _dt
     if _dt is None:
+        _need_models()
         _path()
         import config
         import feedback
@@ -135,6 +148,7 @@ def upload(file: UploadFile = File(...)):
     dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_text(text, encoding='utf-8')
     try:
+        _need_models()
         _path()
         import knowledge                                  # loads the models on first use
         with _lock, tempfile.TemporaryDirectory() as tmp:

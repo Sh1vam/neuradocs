@@ -29,7 +29,7 @@ const BASE = process.env.BASE || 'http://127.0.0.1:8767';
   const main = await JSDOM.fromURL(BASE + '/', Object.assign({}, opts, { beforeParse(w2) { w2.fetch = (u, o) => fetch(new URL(u, BASE).href, o); const stub = new Proxy(function () {}, { get: (t, k) => (k === 'then' ? undefined : stub), apply: (t, th, a) => a[0] }); w2.hljs = stub; w2.marked = stub; } }));
   await sleep(1200);
   const links = [...main.window.document.querySelectorAll('.sb-search a')].map(a => a.getAttribute('href'));
-  console.log('chat sidebar links to Skills and Documents:', links.includes('/skills') && links.includes('/documents'));
+  console.log('chat sidebar links to Skills and Documents:', links.includes('/skills') && links.includes('/documents') && links.includes('/connectors') && links.includes('/models'));
   console.log('page script errors:', errors.length ? errors : 'none');
   process.exit(0);
 })();

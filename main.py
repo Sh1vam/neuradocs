@@ -853,6 +853,8 @@ async def chat(request: ChatRequest):
 
                 if full_response:
                     store.add_message(conv_id, "assistant", full_response)
+                else:
+                    yield f"data: {json.dumps({'error': 'The model returned no text: it probably spent its whole output budget thinking. Lower Thinking to low or medium and try again.'})}\n\n"
                 saved = True
 
                 # Update token stats
@@ -1510,6 +1512,35 @@ BUILD_RULE = ("\n\nBuild mode is ON: call build_project exactly once with a comp
               "Then summarize what was built and give the user the zip link and project folder from the tool result.")
 
 
+NO_ANSWER = ("The model produced no answer: it spent its whole output budget on reasoning before it wrote anything. "
+             "Lower Thinking to low or medium (or set LLM_EFFORT=low in .env) and send the message again.")
+
+
+async def ensure_build(result, user_message, want_build, explicit, on_event=None):
+    """Build mode promised a project. When the model never called the builder, or produced nothing, run the builder directly:
+    the user gets the zip instead of an empty answer."""
+    called = any(t["tool"] in ("build_project", "revise_project") for t in result["tool_calls"])
+    empty = not result["response"].strip() or result["response"] == NO_ANSWER
+    if called or not want_build or not (explicit or empty):
+        return result
+    prev = store.latest_build(build_api.CURRENT_CHAT.get())
+    revise = bool(prev) and build_api.looks_like_change(user_message)
+    tool = "revise_project" if revise else "build_project"
+    if on_event:
+        on_event({"type": "tool_start", "tool": tool})
+    if revise:
+        r = await asyncio.to_thread(build_api.revise_current, user_message)
+    else:
+        r = await asyncio.to_thread(build_api.build, user_message)
+        build_api.remember(r)
+    if on_event:
+        on_event({"type": "tool_done", "tool": tool})
+    result["tool_calls"].append({"tool": tool, "args": {"spec": user_message}, "result": r["response"][:2000]})
+    text = "" if empty else result["response"].strip()
+    result["response"] = (text + "\n\n" if text else "") + r["response"]
+    return result
+
+
 def keep_download_links(res):
     """Models often drop the download link a tool returned. Append any link the final answer is missing."""
     text = res["response"]
@@ -1566,7 +1597,7 @@ async def run_mcp_agent(user_message: str, conversation_history: List[Dict],
                 tools=tools_schema,
                 tool_choice="auto",  # Let the model decide when to use tools
                 temperature=0.7,
-                max_tokens=2048,
+                max_tokens=4096,
             )
         except Exception as e:
             # Groq may not support tool_choice on all models — fall back
@@ -1574,7 +1605,7 @@ async def run_mcp_agent(user_message: str, conversation_history: List[Dict],
                 model=model,
                 messages=messages,
                 temperature=0.7,
-                max_tokens=2048,
+                max_tokens=4096,
             )
 
         choice = response.choices[0]
@@ -1630,10 +1661,13 @@ async def run_mcp_agent(user_message: str, conversation_history: List[Dict],
                 "content": str(tool_result)
             })
 
-    if not final_response:   # every round went to tools: ask once more, without tools, for the answer
+    if not final_response:   # the loop ended without text (every round used tools, or the model spent its output on reasoning)
         messages.append({"role": "user", "content": "Answer now using the tool results above. Do not call any more tools."})
         final_response = groq_client.chat.completions.create(
-            model=model, messages=messages, temperature=0.7, max_tokens=2048).choices[0].message.content or ""
+            model=model, messages=messages, temperature=0.7, max_tokens=4096,
+            extra_body={"reasoning_effort": "low"}).choices[0].message.content or ""
+    if not final_response.strip():
+        final_response = NO_ANSWER
 
     return {
         "response": final_response,
@@ -1686,6 +1720,7 @@ async def mcp_chat(request: dict):
     if not store.chat_exists(conv_id):
         conv_id = store.create_chat(request.get("project_id"))
     build_api.CURRENT_CHAT.set(conv_id)           # lets build_project and revise_project know which chat they work for
+    want_build = bool(request.get("build")) or build_api.looks_like_project(user_message)    # the Build button, or a message that is clearly a project request
     history = [{"role": m["role"], "content": m["content"]} for m in store.get_messages(conv_id, last=10)]
 
     if request.get("stream"):
@@ -1696,7 +1731,8 @@ async def mcp_chat(request: dict):
         def work():
             try:
                 res = asyncio.run(run_mcp_agent(user_message, history, model=model, on_event=events.put,
-                                                extra_rules=BUILD_RULE if request.get("build") else ""))
+                                                extra_rules=BUILD_RULE if want_build else ""))
+                res = asyncio.run(ensure_build(res, user_message, want_build, bool(request.get("build")), events.put))
                 res["response"] = keep_download_links(res)
                 store.add_message(conv_id, "assistant", res["response"])   # saved even if the browser left
                 events.put({"type": "final", "result": res})
@@ -1724,7 +1760,8 @@ async def mcp_chat(request: dict):
     # Run the agentic loop
     try:
         result = await asyncio.to_thread(asyncio.run, run_mcp_agent(user_message, history, model=model,
-                                                                  extra_rules=BUILD_RULE if request.get("build") else ""))
+                                                                  extra_rules=BUILD_RULE if want_build else ""))
+        result = await ensure_build(result, user_message, want_build, bool(request.get("build")))
         result["response"] = keep_download_links(result)
     except Exception as e:
         raise HTTPException(status_code=500, detail=friendly_error(e))
@@ -1764,7 +1801,7 @@ async def call_mcp_tool_directly(request: dict):
 # ─── ROUTERS & STATIC FILES (must stay LAST) ──────────────────────────────────
 # CONCEPT: Starlette tries routes in the order they were added, and a Mount at "/" matches EVERY path,
 # so anything registered after it is unreachable (in the original file /api/mcp/* returned 404).
-import store_api, docs_api, build_api, skills_api, connectors_api
+import store_api, docs_api, build_api, skills_api, connectors_api, models_api
 build_api.configure(groq_client, OUTPUT_DIR, DEFAULT_MODEL, calculate_cost)
 docs_api.configure(extract_text_from_file)
 set_usage_hook(update_token_stats)
@@ -1773,6 +1810,7 @@ app.include_router(docs_api.router)
 app.include_router(build_api.router)
 app.include_router(skills_api.router)
 app.include_router(connectors_api.router)
+app.include_router(models_api.router)
 if os.getenv("APP_PASSWORD"):                           # required before the app is reachable from the internet
     from auth import BasicAuth
     app.add_middleware(BasicAuth, password=os.environ["APP_PASSWORD"])

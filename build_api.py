@@ -41,6 +41,14 @@ def looks_like_change(text):
     return bool(CHANGE.search(text)) and not NEW.search(text)
 
 
+PROJECT = re.compile(r"\b(create|build|make|generate|scaffold|set ?up|develop)\b[^.?!]{0,60}\b(project|app|application|api|website|web ?site|backend|cli|bot|django|flask|fastapi|codebase|game)\b", re.I)
+
+
+def looks_like_project(text):
+    """A message that clearly asks for a new project (the page uses the same words to offer Build mode)."""
+    return bool(PROJECT.search(text))
+
+
 SKILL_CHARS = int(os.getenv('SKILL_CHARS', '3000'))     # most one skill adds to the Coder's prompt
 TEAM = os.getenv('BUILD_TEAM', '1') != '0'          # Researcher + Planner before the Coder (BUILD_TEAM=0 saves tokens)
 
@@ -131,7 +139,7 @@ PLAN_SYSTEM = ('You are a software architect. Given a request and similar open-s
 
 
 def github_search(query, limit=5):
-    """Similar projects: GitHub repository search needs no key (60 requests/hour; set GITHUB_TOKEN for more)."""
+    """Similar projects: GitHub repository search works without a key, but the search endpoint allows only 10 requests a minute: GITHUB_TOKEN raises it to 30."""
     headers = {'User-Agent': 'NeuraDocs', 'Accept': 'application/vnd.github+json'}
     if os.getenv('GITHUB_TOKEN'):
         headers['Authorization'] = 'Bearer ' + os.environ['GITHUB_TOKEN']

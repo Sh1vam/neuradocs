@@ -30,3 +30,48 @@ def test_setup_flags_values_that_break_docker_compose(tmp_path):
     env.write_text('DOMAIN=chat.example.com   (for HTTPS: docker compose --profile tls up -d)\nAPP_PORT=80x\nLLM_BIG=openai/gpt-oss-120b\n', encoding='utf-8')
     found = setup_env.problems(setup_env.parse(env.read_text(encoding='utf-8')))
     assert any('DOMAIN' in f for f in found) and any('APP_PORT' in f for f in found) and not any('LLM_BIG' in f for f in found)
+
+
+USER_ENV = """# Optional overrides:
+LLM_BIG=openai/gpt-oss-120b
+SANDBOX_TOKEN=abc123
+HF_MODELS=Qwen/Qwen3-32B,meta-llama/Llama-3.3-70B-Instruct
+LLM_EFFORT=high
+APP_PASSWORD=pass
+APP_PORT=8010
+HOST=127.0.0.1
+PORT=8001
+SANDBOX_PROXY=http://egress:3128      then: docker compose --profile internet up -d
+EGRESS_ALLOW=pypi.org,github.com,huggingface.co,   (the only domains the sandbox may reach)
+SANDBOX_INSTALL=1                     the tester runs pip install -r requirements.txt before pytest
+SANDBOX_NETWORK=bridge                  local Docker mode only
+EGRESS_ALLOW=pypi.org,files.pythonhosted.org,github.com  
+SKILLS_DIR=D:/Hackathon/myenv/LLM & RAG/Projects/neuradocs/skills                   where your own skills live
+DOMAIN=localhost                 the domain for Caddy TLS (optional, see README)
+BUILD_TEAM=10
+WEB_CONCURRENCY=10
+GITHUB_TOKEN=
+"""
+
+
+def test_fix_cleans_a_real_env_without_touching_secrets():
+    cleaned, changes = setup_env.clean(USER_ENV)
+    v = setup_env.parse(cleaned)
+    assert v['SANDBOX_PROXY'] == 'http://egress:3128' and v['SANDBOX_INSTALL'] == '1' and v['DOMAIN'] == 'localhost'
+    assert v['SKILLS_DIR'] == 'D:/Hackathon/myenv/LLM & RAG/Projects/neuradocs/skills' and v['BUILD_TEAM'] == '1'
+    assert v['EGRESS_ALLOW'] == 'pypi.org,files.pythonhosted.org,github.com'          # the last one wins, as in docker
+    assert cleaned.count('# (repeated: the last one wins)') == 1
+    assert v['APP_PASSWORD'] == 'pass' and v['SANDBOX_TOKEN'] == 'abc123'            # secrets are never changed
+    assert setup_env.clean(cleaned)[1] == []                                           # cleaning twice changes nothing
+
+
+def test_advice_names_what_costs_you():
+    tips = ' '.join(setup_env.advice(setup_env.parse(setup_env.clean(USER_ENV)[0])))        # advice runs after --fix
+    for word in ('GROQ_API_KEY', 'HF_TOKEN', 'APP_PASSWORD is short', 'LLM_EFFORT=high', 'WEB_CONCURRENCY', 'SANDBOX_NETWORK=bridge', 'HOST and PORT', 'SKILLS_DIR'):
+        assert word in tips, word
+
+
+def test_problems_flags_text_after_a_value_before_the_fix():
+    found = setup_env.problems(setup_env.parse(USER_ENV))
+    assert any(f.startswith('SANDBOX_INSTALL') and '--fix' in f for f in found) and any(f.startswith('DOMAIN') for f in found)
+    assert not any(f.startswith('APP_PASSWORD') for f in found)                      # secrets are not judged

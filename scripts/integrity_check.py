@@ -144,7 +144,7 @@ def check(root=ROOT, zip_path=None, db=None):
     if zip_path:
         z = zipfile.ZipFile(zip_path)
         names = z.namelist()
-        forbidden = [n for n in names if re.search(r'(^|/)(\.env|\.git[^/]*|\.gitmodules|__pycache__|data|outputs|node_modules)(/|$)', n)
+        forbidden = [n for n in names if re.search(r'(^|/)(\.env(?:\.bak)?|\.git[^/]*|\.gitmodules|__pycache__|data|outputs|node_modules)(/|$)', n)
                      and not n.endswith(('.gitignore', '.gitattributes'))]
         add('FAIL' if z.testzip() else 'PASS', 'zip file CRC check' + (f' failed at {z.testzip()}' if z.testzip() else ': every file reads back correctly'))
         add('FAIL' if forbidden else 'PASS', f'zip contains files that must not ship: {forbidden[:5]}' if forbidden else f'zip contents are clean ({len(names)} files)')

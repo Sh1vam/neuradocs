@@ -114,6 +114,31 @@ internet access (then `docker compose --profile internet up -d`). It never inven
   options, picks one, writes the spec) -> Coder -> Tester (sandbox) -> Coder fixes -> Tester. The reply carries a Team log and
   the options compared. `BUILD_TEAM=0` skips research and planning to save tokens. Agent mode also has a `search_projects` tool.
 
+## Models page and automatic downloads
+- The **local models** (the embedding model and the reranker behind document search) are downloaded automatically BEFORE the app
+  starts: `python run.py` and the Docker entrypoint do it and print the progress (the Docker image already contains them). Only
+  what is needed is fetched: no ONNX or OpenVINO copies, and the weights once. `/models` shows the same with Download buttons and
+  progress bars, and "Models" in the sidebar turns blue while one is missing.
+- If a download fails (no internet, a rate limit), the app still starts. Document questions then say the models are missing or
+  downloading instead of crashing, and `/models` has a Retry button. `AUTO_DOWNLOAD_MODELS=0` turns the automatic download off.
+- **Cloud models** (Groq, Hugging Face Inference Providers) run on the provider's servers: `/models` lists what your keys can use and
+  there is nothing to download. A chat-sized model on this machine would need a GPU, so only the small models above are local.
+
+## If an answer comes back empty
+gpt-oss thinks before it answers, and the thinking uses the same output budget as the answer. With Thinking=high (or
+`LLM_EFFORT=high`) a big task can use all of it and leave nothing to write. Now: the agent gets 4,096 tokens, its last attempt
+thinks at low effort, an empty result says so in plain words, and in Build mode (or when a message clearly asks for a new project
+and the model produced nothing) the builder runs directly, so you still get the zip.
+
+## Checking your `.env`
+`python scripts/setup_env.py --fix` removes explanations written after a value (docker reads them as part of the value), comments
+out repeated settings and adds what is missing, keeping a copy in `.env.bak`; it never touches tokens or passwords. It also prints
+NOTEs for settings that work but cost you (a short password, `LLM_EFFORT=high`, many app processes). In `.env`, write comments on
+their own line, never after a value. `GITHUB_TOKEN` is optional: the Researcher (Build mode) and the GitHub connector use it to call
+GitHub as you. Without it GitHub allows 10 searches a minute; with it 30. Make a fine-grained token with read-only access to public
+repositories and no other permission.
+- Your own skills are the `my_skills/` folder of this project (mounted into the container). `SKILLS_DIR` is ignored in Docker.
+
 ## Models, thinking level and Hugging Face
 - The model list in the page comes from your keys: Groq's live list (speech and guard models are left out) and, with `HF_TOKEN`,
   Hugging Face Inference Providers, shown under "Hugging Face". `HF_MODELS=a,b` limits that list. Costs shown for models without

@@ -10,3 +10,5 @@ docuteam/workspace/logs/
 docuteam/workspace/state/
 docuteam/workspace/code/builds/
 tests/ui/node_modules/
+my_skills/
+.env.bak

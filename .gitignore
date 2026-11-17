@@ -26,3 +26,5 @@ STOP
 .ruff_cache/
 node_modules/
 docuteam/workspace/.checkpoints.git/
+.env.bak
+my_skills/_pending/

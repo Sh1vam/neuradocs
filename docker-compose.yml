@@ -5,12 +5,15 @@ services:
     env_file: .env
     environment:
       PORT: "${APP_PORT:-8001}"
+      HOST: "0.0.0.0"                          # the container must listen on all addresses: a HOST in .env cannot change that
+      SKILLS_DIR: /data/skills                 # your own skills: the my_skills folder of this project (volume below)
       SANDBOX_URL: http://sandbox:9000
     depends_on: [sandbox]
     networks: [edge, internal]
     ports: ["${APP_BIND:-127.0.0.1}:${APP_PORT:-8001}:${APP_PORT:-8001}"]     # use APP_BIND=0.0.0.0 to expose it without a proxy
     volumes:
       - data:/data
+      - ./my_skills:/data/skills
       - chroma:/app/docuteam/chroma
       - workspace:/app/docuteam/workspace
       - outputs:/app/outputs

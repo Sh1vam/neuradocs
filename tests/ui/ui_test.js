@@ -69,6 +69,7 @@ const stub = new Proxy(function () {}, { get: (t, k) => (k === 'then' ? undefine
   const offer = $('.modal-bg');
   console.log('change offer appears when the chat has a project:', !!offer && offer.textContent.includes('change to the project built earlier'));
   if (offer) offer.querySelector('.modal-btn:not(.primary)').click();
+  console.log('Models link shows that a local model is missing:', /not downloaded/.test(d.getElementById('modelsLink').textContent));
   console.log('page script errors:', errors.length ? errors : 'none');
   process.exit(0);
 })();
