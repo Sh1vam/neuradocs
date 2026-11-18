@@ -48,7 +48,7 @@ services:
   caddy:                                      # optional HTTPS: docker compose --profile tls up -d  (set DOMAIN in .env)
     image: caddy:2
     profiles: ["tls"]
-    command: ["caddy", "reverse-proxy", "--from", "${DOMAIN:-localhost}", "--to", "app:${APP_PORT:-8001}"]
+    command: ["caddy", "reverse-proxy", "--from", "${DOMAIN:-127.0.0.1}", "--to", "app:${APP_PORT:-8001}"]
     ports: ["80:80", "443:443"]
     networks: [edge]
     volumes: [caddy:/data]
