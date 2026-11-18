@@ -1,4 +1,5 @@
 # sandbox.py -- Docker sandbox, run by YOUR code and never exposed as an agent tool (Chapter 07, Part H)
+import os
 import subprocess
 
 from config import WORKSPACE
@@ -17,7 +18,7 @@ def _docker(args, **kw):
 
 
 def create(name):
-    return _docker(['run', '-d', '--name', name, '--network', 'none', '--memory', '2g', '--cpus', '2',
+    return _docker(['run', '-d', '--name', name, '--network', os.environ.get('SANDBOX_NETWORK', 'none'), '--memory', '2g', '--cpus', '2',
                     '--pids-limit', '256', '--read-only', '--tmpfs', '/tmp',
                     '-v', MOUNT + ':/work', '--restart', 'unless-stopped', IMAGE])
 

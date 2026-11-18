@@ -347,3 +347,73 @@ def test_checkpoints_use_a_hidden_repo_and_leave_the_code_folder_plain(monkeypat
     assert (tmp_path / 'ws' / '.checkpoints.git').exists()
     outer = subprocess.run(['git', 'log', '--oneline'], cwd=tmp_path, capture_output=True, text=True)
     assert 'checkpoint' not in outer.stdout                                   # the outer repository got no commit
+
+
+def test_egress_allowlist_and_private_address_guard():
+    sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / 'egress'))
+    import proxy
+    public = lambda h, p: ['151.101.0.223']                                                        # noqa: E731
+    assert proxy.check_target('pypi.org', 443, ['pypi.org'], resolver=public) == (None, '151.101.0.223')
+    assert proxy.check_target('files.pypi.org', 443, ['pypi.org'], resolver=public)[0] is None   # a subdomain of an allowed domain
+    assert 'allowlist' in proxy.check_target('evil.com', 443, ['pypi.org'], resolver=public)[0]
+    assert 'allowlist' in proxy.check_target('notpypi.org', 443, ['pypi.org'], resolver=public)[0]   # the suffix trick
+    assert 'port' in proxy.check_target('pypi.org', 22, ['pypi.org'], resolver=public)[0]
+    for inside in ('127.0.0.1', '10.0.0.5', '192.168.1.9', '169.254.169.254', '172.17.0.2', '::1'):
+        why = proxy.check_target('pypi.org', 443, ['pypi.org'], resolver=lambda h, p, ip=inside: [ip])[0]
+        assert why and 'non-public' in why                                                         # DNS pointing inside is refused
+
+
+def test_egress_proxy_tunnels_only_what_is_allowed():
+    import asyncio
+    sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / 'egress'))
+    import proxy
+
+    async def scenario():
+        async def echo(r, w):
+            w.write(await r.read(100))
+            await w.drain()
+            w.close()
+        echo_srv = await asyncio.start_server(echo, '127.0.0.1', 0)
+        eport = echo_srv.sockets[0].getsockname()[1]
+        mk = lambda allow, private: asyncio.start_server(                                          # noqa: E731
+            lambda r, w: proxy.handle(r, w, allow, private, {eport}), '127.0.0.1', 0)
+        open_srv, closed_srv = await mk(['127.0.0.1'], True), await mk(['127.0.0.1'], False)
+
+        async def connect(srv, host):
+            r, w = await asyncio.open_connection('127.0.0.1', srv.sockets[0].getsockname()[1])
+            w.write(f'CONNECT {host}:{eport} HTTP/1.1\r\n\r\n'.encode())
+            status = (await r.readuntil(b'\r\n\r\n')).split(b' ')[1]
+            if status == b'200':
+                w.write(b'ping')
+                return status, await r.read(10)
+            return status, b''
+        return (await connect(open_srv, '127.0.0.1'), await connect(open_srv, 'example.org'), await connect(closed_srv, '127.0.0.1'))
+    ok, not_listed, private = asyncio.run(scenario())
+    assert ok == (b'200', b'ping')                      # allowed and public-or-allowed-private: the bytes come back
+    assert not_listed[0] == b'403'                      # not on the allowlist
+    assert private[0] == b'403'                         # loopback is refused unless the test switch is on
+
+
+def test_sandbox_install_flag_and_dependency_folder(monkeypatch, tmp_path):
+    import sandbox_client
+    proc = start_runner(tmp_path, monkeypatch)
+    try:
+        assert sandbox_client.run({'t.py': 'print(7)'}, ['python', 't.py'], 20, install=True)[0] == 0          # no requirements.txt: nothing to do
+        rc, out = sandbox_client.run({'requirements.txt': 'no-such-package-xyz-123==9.9\n'}, ['python', '-c', '1'], 60, install=True)
+        assert rc == 3 and 'pip install failed' in out                                                     # a failed install stops the job
+        assert build_api._skip(pathlib.Path('p/.deps/x.py'))                                               # dependencies are never zipped
+    finally:
+        proc.terminate()
+
+
+def test_builder_follows_matching_skills(monkeypatch, tmp_path):
+    point_builder_at(tmp_path, monkeypatch)
+    seen = []
+    llm = lambda system, user: seen.append(system) or FILES                    # noqa: E731
+    res = build_api.build('Create a django todo app with login', llm=llm, run_tests=lambda rel: (0, '1 passed'), team=False)
+    assert 'Skill "django-project"' in seen[0] and 'pytest.ini' in seen[0]       # the Coder got the saved workflow
+    assert 'Skills' in res['response'] and 'following django-project' in res['response']
+    seen.clear()
+    monkeypatch.setenv('SKILLS', '0')
+    build_api.build('Create a django todo app with login', llm=llm, run_tests=lambda rel: (0, '1 passed'), team=False)
+    assert 'Skill "' not in seen[0]                                               # SKILLS=0 switches it off

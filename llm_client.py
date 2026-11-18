@@ -35,16 +35,54 @@ def _fake_create(**kw):
               usage=NS(prompt_tokens=50, completion_tokens=40))
 
 
+_effort = contextvars.ContextVar("effort", default=None)
+
+
+def set_effort(level):
+    """The reasoning effort chosen in the page for the current request (gpt-oss models only). Anything else is ignored."""
+    _effort.set(level if level in ("low", "medium", "high") else None)
+
+
+def current_effort():
+    return _effort.get()
+
+
+_hf = None
+
+
+def _hf_client():
+    global _hf
+    if _hf is None:
+        from openai import OpenAI                                  # Hugging Face's router speaks the OpenAI protocol
+        _hf = OpenAI(base_url=os.getenv("HF_BASE_URL", "https://router.huggingface.co/v1"), api_key=os.environ["HF_TOKEN"])
+    return _hf
+
+
 class _Completions:
     def __init__(self, inner):
         self._inner = inner
 
     def create(self, **kw):
-        if str(kw.get('model', '')).startswith('openai/gpt-oss'):
-            # gpt-oss "thinks" before it answers, and the thinking is billed as output. A low effort keeps
-            # answers fast and inside the free tier's tokens-per-minute limit. A caller can still override it.
-            kw.setdefault('extra_body', {}).setdefault('reasoning_effort', os.getenv('LLM_EFFORT', 'low'))
-        resp = _fake_create(**kw) if os.getenv("FAKE_LLM") == "1" else self._inner.create(**kw)
+        model = str(kw.get("model", ""))
+        if os.getenv("FAKE_LLM") == "1":
+            resp = _fake_create(**kw)
+        elif model.startswith("hf:"):                              # hf:Qwen/Qwen3-32B -> Hugging Face Inference Providers
+            kw = {k: v for k, v in kw.items() if k != "extra_body"}
+            kw["model"] = model[3:]
+            resp = _hf_client().chat.completions.create(**kw)
+        else:
+            extra = dict(kw.get("extra_body") or {})
+            if model.startswith("openai/gpt-oss"):
+                # gpt-oss "thinks" before it answers, and the thinking is billed as output. The page lets you choose how long;
+                # without a choice, low keeps answers fast and inside the free tier's tokens-per-minute limit.
+                extra.setdefault("reasoning_effort", current_effort() or os.getenv("LLM_EFFORT", "low"))
+            else:
+                extra.pop("reasoning_effort", None)                # other models reject that parameter
+            if extra:
+                kw["extra_body"] = extra
+            else:
+                kw.pop("extra_body", None)
+            resp = self._inner.create(**kw)
         u, usage = _usage.get(), getattr(resp, "usage", None)
         if u is not None and usage is not None and not kw.get("stream"):
             p, c = usage.prompt_tokens or 0, usage.completion_tokens or 0
@@ -71,6 +109,10 @@ class GroqAdapter:
 
 def friendly_error(e):
     text = str(e)
+    if 'HF_TOKEN' in text:
+        return 'Hugging Face models need HF_TOKEN in .env (a token that may call Inference Providers).'
+    if '401' in text or 'invalid api key' in text.lower() or 'unauthorized' in text.lower():
+        return 'The provider rejected the API key (401): check GROQ_API_KEY or HF_TOKEN in .env. ' + text[:120]
     if type(e).__name__ == 'RateLimitError' or '429' in text or 'rate limit' in text.lower():
         return ('Groq rate limit reached. The free tier allows about 8,000 tokens per minute and 200,000 per day '
                 'for gpt-oss-120b: wait a minute and try again. (' + text[:160] + ')')

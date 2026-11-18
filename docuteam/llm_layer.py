@@ -17,6 +17,20 @@ PROVIDERS = {
 }
 PROVIDERS['groq-small'] = dict(PROVIDERS['groq'], model=MODELS['small'])
 
+
+def _route(cfg):
+    """Changed for NeuraDocs: hf:<repo> goes to Hugging Face's router, and the effort parameter only exists for gpt-oss models."""
+    model = cfg['model']
+    if model.startswith('hf:'):
+        cfg = dict(cfg, model=model[3:], base_url=os.environ.get('HF_BASE_URL', 'https://router.huggingface.co/v1'), key='HF_TOKEN')
+    if not cfg['model'].startswith('openai/gpt-oss'):
+        cfg = {k: v for k, v in cfg.items() if k != 'effort'}
+    return cfg
+
+
+PROVIDERS['groq'] = _route(PROVIDERS['groq'])
+PROVIDERS['groq-small'] = _route(PROVIDERS['groq-small'])
+
 # Neutral transcript items:
 #  {'role': 'user', 'text': str}
 #  {'role': 'assistant', 'text': str, 'calls': [{'id', 'name', 'args'}]}

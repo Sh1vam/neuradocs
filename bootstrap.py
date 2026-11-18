@@ -21,12 +21,14 @@ def main():
     if sh('docker', 'compose', 'version', check=False).returncode:
         sys.exit('Docker Compose v2 is required.')
     env = Path('.env')
-    if not env.exists():
-        key, password = getpass.getpass('Groq API key (hidden): ').strip(), secrets.token_urlsafe(12)
-        env.write_text(f'GROQ_API_KEY={key}\nLLM_BIG=openai/gpt-oss-120b\nAPP_PASSWORD={password}\n'
-                       f'SANDBOX_TOKEN={secrets.token_urlsafe(24)}\n')
-        print(f'Created .env. Web login: any username, password {password}')
-    values = dict(l.split('=', 1) for l in env.read_text().splitlines() if '=' in l and not l.startswith('#'))
+    sys.path.insert(0, str(Path(__file__).resolve().parent / 'scripts'))
+    import setup_env
+    for key, value in setup_env.ensure(env, ask_key=True).items():       # adds what is missing, never changes what you set
+        if value is None:
+            print(f'.env: {key} is still empty: paste it into .env')
+        else:
+            print(f'.env: added {key}' + (f' = {value}   (the web login password: any username)' if key == 'APP_PASSWORD' else ''))
+    values = setup_env.parse(env.read_text())
     sh('docker', 'compose', 'build')                  # requirements, models and the sandbox service are built here
     sh('docker', 'compose', 'run', '--rm', '--no-deps', '--entrypoint', 'python', 'app', '-m', 'pytest', 'tests', '-q')
     sh('docker', 'compose', 'up', '-d')

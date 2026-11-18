@@ -1,5 +1,5 @@
 # scripts/stress_test.py -- load test for a running NeuraDocs.
-#   python scripts/stress_test.py --url http://127.0.0.1:8000 [--password PW] [--readers 10] [--chatters 10] [--runners 0] [--seconds 15]
+#   python scripts/stress_test.py --url http://127.0.0.1:8001 [--password PW] [--readers 10] [--chatters 10] [--runners 0] [--seconds 15]
 # Start the server with FAKE_LLM=1 (FAKE_LLM_DELAY=1.0) to test the infrastructure without spending Groq tokens.
 # --runners N also runs N users that execute Python in the sandbox (needs the sandbox; slow: it is the scarce resource).
 import argparse
@@ -53,7 +53,7 @@ def pct(values, q):
 
 async def main():
     a = argparse.ArgumentParser()
-    a.add_argument('--url', default='http://127.0.0.1:8000')
+    a.add_argument('--url', default='http://127.0.0.1:8001')
     a.add_argument('--password', default='')
     a.add_argument('--readers', type=int, default=10)
     a.add_argument('--chatters', type=int, default=10)

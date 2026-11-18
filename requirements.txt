@@ -30,3 +30,5 @@ bandit
 pip-audit
 huggingface_hub
 lxml
+pypdf
+openpyxl

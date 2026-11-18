@@ -92,3 +92,8 @@ def chat_messages(cid: str):
 def storage():
     projects, chats = store.counts()
     return {'path': str(store.DB), 'projects': projects, 'chats': chats}
+
+
+@router.get('/chats/{cid}/build')
+def chat_build(cid: str):
+    return store.latest_build(cid) or {}

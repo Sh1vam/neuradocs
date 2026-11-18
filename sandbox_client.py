@@ -20,17 +20,17 @@ def _call(path, payload=None, timeout=30):
         raise RuntimeError(f'sandbox service unreachable or refused the job: {e}')
 
 
-def run(files, argv, timeout=60):
-    d = _call('/run', {'files': files, 'argv': argv, 'timeout': timeout}, timeout + 15)
+def run(files, argv, timeout=60, install=False):
+    d = _call('/run', {'files': files, 'argv': argv, 'timeout': timeout, 'install': install}, timeout + 15 + (180 if install else 0))
     return d['rc'], d['output']
 
 
-def run_folder(folder, argv, timeout=120):
+def run_folder(folder, argv, timeout=120, install=False):
     folder, files = Path(folder), {}
     for p in sorted(folder.rglob('*')):
         if p.is_file() and not {'__pycache__', '.pytest_cache'} & set(p.parts) and p.stat().st_size < 200_000:
             files[p.relative_to(folder).as_posix()] = p.read_text(encoding='utf-8', errors='replace')
-    return run(files, argv, timeout)
+    return run(files, argv, timeout, install)
 
 
 def health():
