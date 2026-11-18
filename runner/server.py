@@ -15,6 +15,7 @@ TOKEN = os.environ.get('SANDBOX_TOKEN', '')
 WORK = Path(os.environ.get('WORKDIR', '/work'))
 ALLOWED = {'python', 'pytest'}
 MAX_OUT, MAX_BODY = 20_000, 4_000_000
+WIN_VARS = ('SYSTEMROOT', 'SYSTEMDRIVE', 'PATHEXT', 'COMSPEC')       # Windows cannot even start Python without SYSTEMROOT; nothing secret
 PROXY_ENV = {k: os.environ[k] for k in ('HTTP_PROXY', 'HTTPS_PROXY', 'NO_PROXY', 'http_proxy', 'https_proxy') if os.environ.get(k)}
 slots = threading.BoundedSemaphore(int(os.environ.get('SANDBOX_SLOTS', '2')))     # jobs at once (the memory limit is shared)
 
@@ -32,7 +33,8 @@ def run_job(files, argv, timeout, install=False):
         if not argv or argv[0] not in ALLOWED:
             return 2, 'command not allowed: ' + (argv[0] if argv else '(empty)')
         cmd = [sys.executable if argv[0] == 'python' else argv[0]] + list(argv[1:])
-        env = {'PATH': os.environ.get('PATH', ''), 'HOME': str(root), 'PYTHONDONTWRITEBYTECODE': '1', **PROXY_ENV}   # no secrets in here
+        win = {k: os.environ[k] for k in WIN_VARS if k in os.environ}                       # empty on Linux, so the container is unchanged
+        env = {'PATH': os.environ.get('PATH', ''), 'HOME': str(root), 'PYTHONDONTWRITEBYTECODE': '1', **win, **PROXY_ENV}   # no secrets in here
         if install and (root / 'requirements.txt').exists():       # needs internet: only through the allowlist proxy
             try:
                 pip = subprocess.run([sys.executable, '-m', 'pip', 'install', '-r', 'requirements.txt', '--target', '.deps', '-q', '--no-input',

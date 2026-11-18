@@ -27,9 +27,13 @@ def norm(name):
     return re.sub(r'[-_.]+', '-', name.lower())
 
 
+LOCAL_ONLY = {'.env', '.env.bak'}        # your own secrets: .gitignore and .dockerignore keep them out of the repository and the image
+
+
 def project_files(root):
     for p in sorted(root.rglob('*')):
-        if p.is_file() and not SKIP & set(p.relative_to(root).parts):
+        parts = p.relative_to(root).parts
+        if p.is_file() and not SKIP & set(parts) and parts[0] != '.git' and p.name not in LOCAL_ONLY:
             yield p
 
 
@@ -43,15 +47,16 @@ def check(root=ROOT, zip_path=None, db=None):
     hits = [rel(p) for p in files if p.suffix in TEXT and p.stat().st_size < 1_000_000
             and any(s.search(p.read_text(encoding='utf-8', errors='ignore')) for s in SECRETS)]
     add('FAIL' if hits else 'PASS', f'secrets in source files: {hits}' if hits else 'no API keys or private keys in any text file')
-    if (root / '.env').exists():
-        add('WARN', '.env exists (fine on your machine, but it must never be zipped, committed or baked into an image)')
+    local_env = [rel(p) for p in sorted(root.rglob('.env')) if p.is_file() and not SKIP & set(p.relative_to(root).parts)]
+    if local_env:
+        add('WARN', f'{local_env} exist (fine on your machine, but they must never be zipped, committed or baked into an image)')
 
     # 2. git metadata: docuteam/workspace/code must be a plain folder, and there must be no nested repositories
-    nested = [rel(p) for p in root.rglob('.git*') if not SKIP & set(p.relative_to(root).parts)
+    nested = [rel(p) for p in root.rglob('.git*') if p != root / '.git' and not SKIP & set(p.relative_to(root).parts)     # your own top-level repository is fine
               and p.name not in ('.gitignore', '.gitattributes') or (p.name in ('.gitignore', '.gitkeep') and 'workspace/code' in p.as_posix())]
     nested += [rel(p) for p in root.rglob('.gitmodules')]
     add('FAIL' if nested else 'PASS', f'git metadata that should not be there: {sorted(set(nested))}' if nested
-        else 'no .git, .gitmodules or stray .gitignore: docuteam/workspace/code is a plain folder')
+        else 'no nested .git, .gitmodules or stray .gitignore: docuteam/workspace/code is a plain folder')
 
     # 3. every Python file parses
     broken = []
