@@ -34,7 +34,8 @@ def run_job(files, argv, timeout, install=False):
             return 2, 'command not allowed: ' + (argv[0] if argv else '(empty)')
         cmd = [sys.executable if argv[0] == 'python' else argv[0]] + list(argv[1:])
         win = {k: os.environ[k] for k in WIN_VARS if k in os.environ}                       # empty on Linux, so the container is unchanged
-        env = {'PATH': os.environ.get('PATH', ''), 'HOME': str(root), 'PYTHONDONTWRITEBYTECODE': '1', **win, **PROXY_ENV}   # no secrets in here
+        home = str(root)                                                                    # the job's own folder, never yours. Linux reads HOME; Windows ignores it and reads USERPROFILE (Path.home() raises without it)
+        env = {'PATH': os.environ.get('PATH', ''), 'HOME': home, 'USERPROFILE': home, 'PYTHONDONTWRITEBYTECODE': '1', **win, **PROXY_ENV}   # no secrets in here
         if install and (root / 'requirements.txt').exists():       # needs internet: only through the allowlist proxy
             try:
                 pip = subprocess.run([sys.executable, '-m', 'pip', 'install', '-r', 'requirements.txt', '--target', '.deps', '-q', '--no-input',
